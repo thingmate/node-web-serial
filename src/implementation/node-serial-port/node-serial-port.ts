@@ -1,4 +1,4 @@
-import type { BindingInterface, BindingPortInterface } from '@serialport/bindings-cpp';
+import type { BindingInterface, BindingPortInterface, OpenOptions } from '@serialport/bindings-cpp';
 import { SerialPort as SerialPortDriver } from 'serialport';
 import type { SerialInputSignals } from '../../types/serial-input-signals/serial-input-signals.ts';
 import type { SerialOptions } from '../../types/serial-options/serial-options.ts';
@@ -31,6 +31,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
   #writeFatal = false;
   #writeController: WritableStreamDefaultController | undefined;
   #signals = { dtr: true, rts: true, brk: false };
+  #openOptions: SerialOptions | undefined;
 
   /**
    * Not usable in Node: the `connect` event never fires without hotplug
@@ -136,16 +137,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     }
     this.#state = 'opening';
     try {
-      this.#port = await this.#binding.open({
-        path: this.#path,
-        baudRate: options.baudRate,
-        // The checks above narrowed the values; the binding's numeric unions cannot see it.
-        dataBits: (options.dataBits ?? 8) as 7 | 8,
-        stopBits: (options.stopBits ?? 1) as 1 | 1.5 | 2,
-        parity: options.parity ?? 'none',
-        rtscts: options.flowControl === 'hardware',
-        lock: true,
-      });
+      this.#port = await this.#binding.open(this.#driverOpenOptions(options));
     } catch (error) {
       this.#state = 'closed';
       throw specError('NetworkError', `Failed to open the serial port: ${errorText(error)}`);
@@ -154,6 +146,21 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     this.#connected = true;
     this.#bufferSize = options.bufferSize ?? 255;
     this.#signals = { dtr: true, rts: true, brk: false };
+    this.#openOptions = options;
+  }
+
+  /** Maps validated connection options onto the binding's open options. */
+  #driverOpenOptions(options: SerialOptions): OpenOptions {
+    return {
+      path: this.#path,
+      baudRate: options.baudRate,
+      // The open() checks narrowed the values; the binding's numeric unions cannot see it.
+      dataBits: (options.dataBits ?? 8) as 7 | 8,
+      stopBits: (options.stopBits ?? 1) as 1 | 1.5 | 2,
+      parity: options.parity ?? 'none',
+      rtscts: options.flowControl === 'hardware',
+      lock: true,
+    };
   }
 
   /**
@@ -312,9 +319,13 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     }
   }
 
-  /** Whether a driver error reports a device disconnect (bindings mark raw failures with the flag). */
+  /** Whether a driver error reports a device disconnect — the binding marks raw failures with `disconnect` (EBADF/ENXIO); the doubled shape `disconnected` is honored too. */
   #isDisconnect(error: unknown): boolean {
-    return error instanceof Error && (error as { disconnected?: boolean }).disconnected === true;
+    return (
+      error instanceof Error &&
+      ((error as { disconnect?: boolean }).disconnect === true ||
+        (error as { disconnected?: boolean }).disconnected === true)
+    );
   }
 
   /** Whether a driver error reports an orderly cancellation, as raised when closing in-flight operations. */
@@ -443,6 +454,9 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
       this.#readFatal = false;
       this.#writeFatal = false;
       this.dispatchEvent(new Event('connect', { bubbles: true }));
+      if (this.#state === 'opened') {
+        void this.#renewHandle();
+      }
       return;
     }
     if (!this.#connected) {
@@ -454,6 +468,34 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     }
     this.#connected = false;
     this.dispatchEvent(new Event('disconnect', { bubbles: true }));
+  }
+
+  /**
+   * Replaces the driver handle of an open port after a reappearance: the old
+   * descriptor died with the device, so the hub-reported reconnect re-opens
+   * with the stored connection options. A failed re-open runs the disconnect
+   * algorithm — the port reports itself disconnected until the next presence
+   * change.
+   */
+  async #renewHandle(): Promise<void> {
+    const options: SerialOptions | undefined = this.#openOptions;
+    if (options === undefined || this.#state !== 'opened') {
+      return;
+    }
+    try {
+      const fresh: BindingPortInterface = await this.#binding.open(
+        this.#driverOpenOptions(options),
+      );
+      const stale: BindingPortInterface | undefined = this.#port;
+      this.#port = fresh;
+      if (stale !== undefined) {
+        await stale.close().catch(() => {});
+      }
+    } catch (error) {
+      this.#disconnect(
+        `Failed to re-open the serial port after it was reconnected: ${errorText(error)}`,
+      );
+    }
   }
 
   /**
@@ -492,6 +534,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     this.#readable = null;
     this.#writable = null;
     this.#port = undefined;
+    this.#openOptions = undefined;
   }
 }
 
