@@ -25,17 +25,11 @@ export class NodeSerial extends EventTarget implements Serial {
    * detection. Reading or assigning throws a `TypeError`.
    */
   get onconnect(): ((this: Serial, event: Event) => any) | null {
-    return throwUnsupportedHandler(
-      'onconnect',
-      'the "connect" event never fires without hotplug detection.',
-    );
+    return throwUnsupportedHandler('onconnect', 'never-fires');
   }
 
   set onconnect(_handler: ((this: Serial, event: Event) => any) | null) {
-    throwUnsupportedHandler(
-      'onconnect',
-      'the "connect" event never fires without hotplug detection.',
-    );
+    throwUnsupportedHandler('onconnect', 'never-fires');
   }
 
   /**
@@ -43,17 +37,11 @@ export class NodeSerial extends EventTarget implements Serial {
    * detection. Reading or assigning throws a `TypeError`.
    */
   get ondisconnect(): ((this: Serial, event: Event) => any) | null {
-    return throwUnsupportedHandler(
-      'ondisconnect',
-      'the "disconnect" event never fires without hotplug detection.',
-    );
+    return throwUnsupportedHandler('ondisconnect', 'never-fires');
   }
 
   set ondisconnect(_handler: ((this: Serial, event: Event) => any) | null) {
-    throwUnsupportedHandler(
-      'ondisconnect',
-      'the "disconnect" event never fires without hotplug detection.',
-    );
+    throwUnsupportedHandler('ondisconnect', 'never-fires');
   }
 
   constructor({ binding }: { binding?: BindingInterface } = {}) {

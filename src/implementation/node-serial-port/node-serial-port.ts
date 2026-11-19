@@ -36,17 +36,11 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
    * detection. Reading or assigning throws a `TypeError`.
    */
   get onconnect(): ((this: SerialPort, event: Event) => any) | null {
-    return throwUnsupportedHandler(
-      'onconnect',
-      'the "connect" event never fires without hotplug detection.',
-    );
+    return throwUnsupportedHandler('onconnect', 'never-fires');
   }
 
   set onconnect(_handler: ((this: SerialPort, event: Event) => any) | null) {
-    throwUnsupportedHandler(
-      'onconnect',
-      'the "connect" event never fires without hotplug detection.',
-    );
+    throwUnsupportedHandler('onconnect', 'never-fires');
   }
 
   /**
@@ -55,17 +49,11 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
    * `TypeError`.
    */
   get ondisconnect(): ((this: SerialPort, event: Event) => any) | null {
-    return throwUnsupportedHandler(
-      'ondisconnect',
-      'listen with addEventListener("disconnect", …) instead.',
-    );
+    return throwUnsupportedHandler('ondisconnect', 'listen-instead');
   }
 
   set ondisconnect(_handler: ((this: SerialPort, event: Event) => any) | null) {
-    throwUnsupportedHandler(
-      'ondisconnect',
-      'listen with addEventListener("disconnect", …) instead.',
-    );
+    throwUnsupportedHandler('ondisconnect', 'listen-instead');
   }
 
   constructor({
