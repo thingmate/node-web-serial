@@ -24,33 +24,39 @@ import { throwUnsupportedHandler } from '../throw-unsupported-handler/throw-unsu
  * `0` or less disables the polling. The timer is `unref()`d, so it never
  * keeps the process alive. Events are delivered to `addEventListener`
  * listeners; the `on*` handler properties are not supported.
+ *
+ * Node extension: the hub-level events target the hub itself (Node's
+ * `EventTarget` has no parent chain to bubble through), so a listener
+ * identifies what changed with {@linkcode NodeSerial.getPorts} — the
+ * specification's own example reads `e.target` as the port, which the
+ * port-level events on {@linkcode NodeSerialPort} deliver.
  */
 export class NodeSerial extends EventTarget implements Serial {
   readonly #binding: BindingInterface;
   readonly #ports = new Map<string, NodeSerialPort>();
 
   /**
-   * Not usable in Node: the `connect` event never fires without hotplug
-   * detection. Reading or assigning throws a `TypeError`.
+   * Not usable as a property: the events are delivered to `addEventListener`
+   * listeners only. Reading or assigning throws a `TypeError`.
    */
   get onconnect(): ((this: Serial, event: Event) => any) | null {
-    return throwUnsupportedHandler('onconnect', 'never-fires');
+    return throwUnsupportedHandler('onconnect');
   }
 
   set onconnect(_handler: ((this: Serial, event: Event) => any) | null) {
-    throwUnsupportedHandler('onconnect', 'never-fires');
+    throwUnsupportedHandler('onconnect');
   }
 
   /**
-   * Not usable in Node: the `disconnect` event never fires without hotplug
-   * detection. Reading or assigning throws a `TypeError`.
+   * Not usable as a property: the events are delivered to `addEventListener`
+   * listeners only. Reading or assigning throws a `TypeError`.
    */
   get ondisconnect(): ((this: Serial, event: Event) => any) | null {
-    return throwUnsupportedHandler('ondisconnect', 'never-fires');
+    return throwUnsupportedHandler('ondisconnect');
   }
 
   set ondisconnect(_handler: ((this: Serial, event: Event) => any) | null) {
-    throwUnsupportedHandler('ondisconnect', 'never-fires');
+    throwUnsupportedHandler('ondisconnect');
   }
 
   constructor({

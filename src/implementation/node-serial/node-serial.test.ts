@@ -1,6 +1,6 @@
-import { SerialPortMock } from 'serialport';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { SerialPortMock } from 'serialport';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NodeSerialPort } from '../node-serial-port/node-serial-port.ts';
 import { NodeSerial } from './node-serial.ts';
@@ -16,6 +16,7 @@ describe('NodeSerial', () => {
       pollingInterval: 0,
     });
     expect(() => serial.onconnect).toThrow(TypeError);
+    expect(() => serial.onconnect).toThrow(/addEventListener\("connect", …\) instead/);
     expect(() => {
       serial.onconnect = null;
     }).toThrow(TypeError);

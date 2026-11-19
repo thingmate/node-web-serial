@@ -208,7 +208,7 @@ describe('NodeSerialPort', () => {
   it('throws when the onconnect handler surface is touched', () => {
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/ttyUSB0' });
     expect(() => port.onconnect).toThrow(TypeError);
-    expect(() => port.onconnect).toThrow(/never fires/);
+    expect(() => port.onconnect).toThrow(/addEventListener\("connect", …\) instead/);
     expect(() => {
       port.onconnect = null;
     }).toThrow(TypeError);

@@ -34,15 +34,15 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
   #openOptions: SerialOptions | undefined;
 
   /**
-   * Not usable in Node: the `connect` event never fires without hotplug
-   * detection. Reading or assigning throws a `TypeError`.
+   * Not usable as a property: the events are delivered to `addEventListener`
+   * listeners only. Reading or assigning throws a `TypeError`.
    */
   get onconnect(): ((this: SerialPort, event: Event) => any) | null {
-    return throwUnsupportedHandler('onconnect', 'never-fires');
+    return throwUnsupportedHandler('onconnect');
   }
 
   set onconnect(_handler: ((this: SerialPort, event: Event) => any) | null) {
-    throwUnsupportedHandler('onconnect', 'never-fires');
+    throwUnsupportedHandler('onconnect');
   }
 
   /**
@@ -51,11 +51,11 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
    * `TypeError`.
    */
   get ondisconnect(): ((this: SerialPort, event: Event) => any) | null {
-    return throwUnsupportedHandler('ondisconnect', 'listen-instead');
+    return throwUnsupportedHandler('ondisconnect');
   }
 
   set ondisconnect(_handler: ((this: SerialPort, event: Event) => any) | null) {
-    throwUnsupportedHandler('ondisconnect', 'listen-instead');
+    throwUnsupportedHandler('ondisconnect');
   }
 
   constructor({
