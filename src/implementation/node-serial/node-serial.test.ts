@@ -157,6 +157,7 @@ describe('NodeSerial.hotplug', () => {
       binding: SerialPortMock.binding,
       pollingInterval: 0,
     });
+    const listSpy = vi.spyOn(SerialPortMock.binding, 'list');
     const hubEvents: string[] = [];
     serial.addEventListener('connect', (): void => {
       hubEvents.push('connect');
@@ -167,6 +168,7 @@ describe('NodeSerial.hotplug', () => {
     SerialPortMock.binding.createPort('/dev/a');
     await vi.advanceTimersByTimeAsync(2000);
     expect(hubEvents).toEqual([]);
+    expect(listSpy).not.toHaveBeenCalled();
   });
 
   it('enables polling by default', async () => {
@@ -254,6 +256,9 @@ describe('NodeSerial.hotplug', () => {
       binding: SerialPortMock.binding,
       pollingInterval: 500,
     });
+    // A closed port's port-level listener does not start the hub watching
+    // (documented deviation) — the hub-level subscription does.
+    serial.addEventListener('connect', (): void => {});
     await vi.advanceTimersByTimeAsync(0);
     const port: NodeSerialPort = (await serial.getPorts())[0]!;
     let portConnects: number = 0;
@@ -287,16 +292,128 @@ describe('NodeSerial.hotplug', () => {
 describe('NodeSerial.process', () => {
   it('never keeps the process alive while watching by default', () => {
     // A ref'd interval would keep the child process running past its work and
-    // force the test's timeout kill: the watcher timer must be unref()d.
+    // force the test's timeout kill: the watcher timer must be unref()d. The
+    // timer only exists under need, so the probe subscribes first.
     const entry: string = pathToFileURL('src/implementation/node-serial/node-serial.ts').href;
     execFileSync(
       process.execPath,
       [
         '--input-type=module',
         '--eval',
-        `import('${entry}').then(({ NodeSerial }) => { new NodeSerial(); });`,
+        `import('${entry}').then(({ NodeSerial }) => { const serial = new NodeSerial(); serial.addEventListener('connect', () => {}); });`,
       ],
       { timeout: 5000, cwd: process.cwd() },
     );
+  });
+});
+
+describe('NodeSerial.lazyWatching', () => {
+  beforeEach(() => {
+    SerialPortMock.binding.reset();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('does not poll until something needs watching', async () => {
+    new NodeSerial({ binding: SerialPortMock.binding });
+    const listSpy = vi.spyOn(SerialPortMock.binding, 'list');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(listSpy).not.toHaveBeenCalled();
+  });
+
+  it('starts polling on the first hub-level listener', async () => {
+    const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
+    const listSpy = vi.spyOn(SerialPortMock.binding, 'list');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(listSpy).not.toHaveBeenCalled();
+    serial.addEventListener('connect', (): void => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(listSpy.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it('stops polling once the last hub-level listener is removed', async () => {
+    const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
+    const listSpy = vi.spyOn(SerialPortMock.binding, 'list');
+    const listener = (): void => {};
+    // Added twice, removed once: EventTarget dedups, so the real count is 0.
+    serial.addEventListener('connect', listener);
+    serial.addEventListener('connect', listener);
+    await vi.advanceTimersByTimeAsync(0);
+    const duringCalls: number = listSpy.mock.calls.length;
+    expect(duringCalls).toBeGreaterThan(0);
+    serial.removeEventListener('connect', listener);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(listSpy.mock.calls.length).toBe(duringCalls);
+  });
+
+  it('stops polling when a signal aborts', async () => {
+    const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
+    const listSpy = vi.spyOn(SerialPortMock.binding, 'list');
+    const controller: AbortController = new AbortController();
+    serial.addEventListener('connect', (): void => {}, { signal: controller.signal });
+    await vi.advanceTimersByTimeAsync(0);
+    const duringCalls: number = listSpy.mock.calls.length;
+    expect(duringCalls).toBeGreaterThan(0);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(listSpy.mock.calls.length).toBe(duringCalls);
+  });
+
+  it('an open port keeps watching without hub listeners; close releases it', async () => {
+    SerialPortMock.binding.createPort('/dev/a');
+    const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
+    const listSpy = vi.spyOn(SerialPortMock.binding, 'list');
+    const port: NodeSerialPort = (await serial.getPorts())[0]!;
+    await port.open({ baudRate: 9600 });
+    await vi.advanceTimersByTimeAsync(500);
+    const duringCalls: number = listSpy.mock.calls.length;
+    expect(duringCalls).toBeGreaterThan(0);
+    await port.close();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(listSpy.mock.calls.length).toBe(duringCalls);
+  });
+
+  it('renews an open port on reappearance with zero hub listeners', async () => {
+    SerialPortMock.binding.createPort('/dev/a');
+    const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
+    const port: NodeSerialPort = (await serial.getPorts())[0]!;
+    await port.open({ baudRate: 9600 });
+    let portConnects: number = 0;
+    let portDisconnects: number = 0;
+    port.addEventListener('connect', (): void => {
+      portConnects += 1;
+    });
+    port.addEventListener('disconnect', (): void => {
+      portDisconnects += 1;
+    });
+    SerialPortMock.binding.reset();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(portDisconnects).toBe(1);
+    SerialPortMock.binding.createPort('/dev/a');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(portConnects).toBe(1);
+    expect(port.connected).toBe(true);
+  });
+
+  it('re-subscribing restarts watching with a fresh silent baseline', async () => {
+    const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
+    const hubEvents: string[] = [];
+    const listener = (): void => {
+      hubEvents.push('connect');
+    };
+    serial.addEventListener('connect', listener);
+    await vi.advanceTimersByTimeAsync(0);
+    serial.removeEventListener('connect', listener);
+    SerialPortMock.binding.createPort('/dev/x');
+    serial.addEventListener('connect', listener);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hubEvents).toEqual([]);
+    SerialPortMock.binding.createPort('/dev/y');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(hubEvents).toEqual(['connect']);
   });
 });
