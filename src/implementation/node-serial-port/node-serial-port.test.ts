@@ -113,15 +113,41 @@ class GRecordingBinding implements BindingInterface {
     return Promise.resolve([]);
   }
 
+  hangOpen = false;
+  closes = 0;
+  readonly #hangingOpens: Array<{
+    options: OpenOptions;
+    resolve: (port: BindingPortInterface) => void;
+  }> = [];
+
+  /** Releases the oldest hung `open()` with a built port. */
+  releaseOpen(): void {
+    const hanging = this.#hangingOpens.shift();
+    if (hanging !== undefined) {
+      hanging.resolve(this.#buildPort(hanging.options));
+    }
+  }
+
   async open(options: OpenOptions): Promise<BindingPortInterface> {
     this.opens += 1;
     if (this.#failingOpen) {
       throw new Error('driver re-open failure');
     }
+    if (this.hangOpen) {
+      return new Promise((resolve) => {
+        this.#hangingOpens.push({ options, resolve });
+      });
+    }
+    return this.#buildPort(options);
+  }
+
+  #buildPort(options: OpenOptions): BindingPortInterface {
     return {
       openOptions: options as Required<OpenOptions>,
       isOpen: true,
-      close: async () => {},
+      close: async () => {
+        this.closes += 1;
+      },
       read: async (buffer: Buffer, offset: number, length: number) => {
         this.reads.push({ offset, length });
         if (this.#disconnectedRead) {
@@ -264,6 +290,26 @@ describe('NodeSerialPort.open', () => {
     });
     await expect(port.open({ baudRate: 9600, dataBits: 7.5 })).rejects.toThrow(TypeError);
     await expect(port.open({ baudRate: 9600, dataBits: 9 })).rejects.toThrow(TypeError);
+  });
+
+  it('rejects a negative or non-integer baudRate, like the enforced-range unsigned long', async () => {
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/ttyUSB0',
+      binding: SerialPortMock.binding,
+    });
+    await expect(port.open({ baudRate: -9600 })).rejects.toThrow(TypeError);
+    await expect(port.open({ baudRate: 1.5 })).rejects.toThrow(TypeError);
+    await expect(port.open({ baudRate: Number.NaN })).rejects.toThrow(TypeError);
+  });
+
+  it('rejects a negative or non-integer bufferSize, like the enforced-range unsigned long', async () => {
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/ttyUSB0',
+      binding: SerialPortMock.binding,
+    });
+    await expect(port.open({ baudRate: 9600, bufferSize: -1 })).rejects.toThrow(TypeError);
+    await expect(port.open({ baudRate: 9600, bufferSize: 2.5 })).rejects.toThrow(TypeError);
+    await expect(port.open({ baudRate: 9600, bufferSize: Number.NaN })).rejects.toThrow(TypeError);
   });
 
   it('rejects open() with a TypeError when stopBits is not 1 or 2', async () => {
@@ -959,6 +1005,27 @@ describe('NodeSerialPort.presence.renewal', () => {
     const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
     const result: ReadableStreamReadResult<Uint8Array> = await reader.read();
     expect(Array.from(result.value ?? [])).toEqual([111, 107]);
+  });
+
+  it('discards the renewed handle when the port closed during the re-open', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ data: Buffer.from('ok') });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    presenceChannels.get(port)!(false);
+    binding.hangOpen = true;
+    presenceChannels.get(port)!(true);
+    await new Promise<void>((resolve: () => void) => {
+      setImmediate(resolve);
+    });
+    expect(binding.opens).toBe(2);
+    // The user closes while the renewal re-open is in flight: the fresh
+    // handle must be closed when the renewal resumes, not orphaned.
+    await port.close();
+    binding.releaseOpen();
+    await new Promise<void>((resolve: () => void) => {
+      setImmediate(resolve);
+    });
+    expect(binding.closes).toBe(2);
   });
 
   it('reports disconnect when the handle renewal fails', async () => {

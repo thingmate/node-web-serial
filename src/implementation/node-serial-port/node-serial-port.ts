@@ -137,8 +137,8 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     if (this.#state !== 'closed') {
       throw specError('InvalidStateError', 'The serial port is not closed.');
     }
-    if (options.baudRate === 0) {
-      throw new TypeError('"baudRate" must not be 0.');
+    if (!Number.isInteger(options.baudRate) || options.baudRate <= 0) {
+      throw new TypeError('"baudRate" must be a positive integer.');
     }
     if (options.dataBits !== undefined && options.dataBits !== 7 && options.dataBits !== 8) {
       throw new TypeError('"dataBits" must be 7 or 8.');
@@ -146,8 +146,11 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     if (options.stopBits !== undefined && options.stopBits !== 1 && options.stopBits !== 2) {
       throw new TypeError('"stopBits" must be 1 or 2.');
     }
-    if (options.bufferSize !== undefined && options.bufferSize === 0) {
-      throw new TypeError('"bufferSize" must not be 0.');
+    if (
+      options.bufferSize !== undefined &&
+      (!Number.isInteger(options.bufferSize) || options.bufferSize <= 0)
+    ) {
+      throw new TypeError('"bufferSize" must be a positive integer.');
     }
     this.#state = 'opening';
     try {
@@ -497,11 +500,18 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     if (options === undefined || this.#state !== 'opened') {
       return;
     }
+    const stale: BindingPortInterface | undefined = this.#port;
     try {
       const fresh: BindingPortInterface = await this.#binding.open(
         this.#driverOpenOptions(options),
       );
-      const stale: BindingPortInterface | undefined = this.#port;
+      // The port may have closed — or been closed and re-opened with a new
+      // handle — while the re-open was in flight: the fresh handle belongs to
+      // this renewal only if the port still holds the handle it started with.
+      if (this.#state !== 'opened' || this.#port !== stale) {
+        await fresh.close().catch(() => {});
+        return;
+      }
       this.#port = fresh;
       if (stale !== undefined) {
         await stale.close().catch(() => {});

@@ -140,6 +140,7 @@ describe('NodeSerial.hotplug', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
