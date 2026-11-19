@@ -1,5 +1,5 @@
 import { SerialPort } from 'serialport';
-import type { BindingInterface } from '@serialport/bindings-cpp';
+import type { BindingInterface, BindingPortInterface } from '@serialport/bindings-cpp';
 import { specError } from '../spec-errors/spec-errors.private.ts';
 import type { SerialOptions } from '../../types/serial-options/serial-options.ts';
 import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-info.ts';
@@ -17,6 +17,10 @@ export class NodeSerialPort {
   readonly #binding: BindingInterface;
   #state: 'closed' | 'opening' | 'opened' | 'closing' = 'closed';
   #connected = false;
+  #port: BindingPortInterface | undefined;
+  #bufferSize = 255;
+  #readable: ReadableStream<Uint8Array> | null = null;
+  #readFatal = false;
 
   constructor({
     path,
@@ -90,7 +94,7 @@ export class NodeSerialPort {
     }
     this.#state = 'opening';
     try {
-      await this.#binding.open({
+      this.#port = await this.#binding.open({
         path: this.#path,
         baudRate: options.baudRate,
         // The checks above narrowed the values; the binding's numeric unions cannot see it.
@@ -109,5 +113,73 @@ export class NodeSerialPort {
     }
     this.#state = 'opened';
     this.#connected = true;
+    this.#bufferSize = options.bufferSize ?? 255;
+  }
+
+  /**
+   * Incoming bytes as a byte-oriented web stream, or `null` while the port is
+   * not open. A driver read error errors the stream with an `UnknownError`
+   * DOMException and releases it — the next access creates a fresh stream, so
+   * consumers can recover the way the specification's read loop describes.
+   * Only a driver disconnect makes `readable` permanently `null`.
+   *
+   * Reads are pull-based: the operating system is only asked for data when a
+   * consumer pulls, and each read fills at most `bufferSize` bytes.
+   */
+  get readable(): ReadableStream<Uint8Array> | null {
+    if (this.#readable !== null) {
+      return this.#readable;
+    }
+    if (this.#state !== 'opened' || this.#readFatal) {
+      return null;
+    }
+    const port: BindingPortInterface = this.#port!;
+    this.#readable = new ReadableStream(
+      {
+        type: 'bytes',
+        autoAllocateChunkSize: this.#bufferSize,
+        pull: (controller) => this.#pullRead(port, controller),
+        cancel: (): void => {
+          this.#readable = null;
+        },
+      },
+      { highWaterMark: this.#bufferSize },
+    );
+    return this.#readable;
+  }
+
+  /** Pull algorithm of the readable stream: one driver read into the BYOB view. */
+  async #pullRead(
+    port: BindingPortInterface,
+    controller: ReadableByteStreamController,
+  ): Promise<void> {
+    const view: ArrayBufferView | null = controller.byobRequest?.view ?? null;
+    if (view === null) {
+      controller.error(specError('UnknownError', 'The readable stream has no buffer to read into.'));
+      this.#readable = null;
+      return;
+    }
+    try {
+      const { bytesRead }: { buffer: Buffer; bytesRead: number } = await port.read(
+        Buffer.from(view.buffer, view.byteOffset, view.byteLength),
+        view.byteOffset,
+        view.byteLength,
+      );
+      if (this.#readable === null || this.#state !== 'opened') {
+        return;
+      }
+      controller.byobRequest?.respond(bytesRead);
+    } catch (error) {
+      if (this.#state !== 'opened') {
+        return;
+      }
+      controller.error(
+        specError(
+          'UnknownError',
+          `Failed to read from the serial port: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+      this.#readable = null;
+    }
   }
 }
