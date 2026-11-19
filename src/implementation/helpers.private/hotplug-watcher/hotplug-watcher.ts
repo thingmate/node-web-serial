@@ -25,6 +25,13 @@ export interface HotplugWatcherOptions {
  * new instance, which re-baselines silently.
  */
 export class HotplugWatcher {
+  /**
+   * Milliseconds between two polls by default; the hub reads it when a
+   * watching period starts, and a value of `0` or less means it never
+   * starts. Package-internal knob, not a construction option.
+   */
+  static interval = 500;
+
   readonly #binding: BindingInterface;
   readonly #onAdded: (info: PortInfo) => void;
   readonly #onRemoved: (path: string) => void;

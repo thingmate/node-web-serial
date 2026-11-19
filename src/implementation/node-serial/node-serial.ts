@@ -17,11 +17,6 @@ export interface NodeSerialOptions {
    * system binding. Test doubles pass their own.
    */
   readonly binding?: BindingInterface;
-  /**
-   * Milliseconds between two polls of the port list — `500` by default; a
-   * value of `0` or less disables the polling.
-   */
-  readonly pollingInterval?: number;
 }
 
 /**
@@ -34,14 +29,15 @@ export interface NodeSerialOptions {
  * `NodeSerialPort` instance, the way the specification's port set behaves.
  *
  * Because Node has no operating system device watching, the hub emulates the
- * specification's `connect` and `disconnect` events by polling `list()`.
+ * specification's `connect` and `disconnect` events by polling `list()` —
+ * every {@linkcode HotplugWatcher.interval} milliseconds (a package-internal
+ * static, `500` by default; `0` or less means the hub never watches).
  * Watching starts with the first hub-level `connect`/`disconnect` listener or
  * the first opened port, and stops when the last need goes — nothing is
- * observed while nobody watches, so events are not retroactive. Polls run
- * every `pollingInterval` milliseconds by default (`500`); a value of `0` or
- * less disables watching entirely. The timer is `unref()`d, so it never keeps
- * the process alive. Events are delivered to `addEventListener` listeners;
- * the `on*` handler properties are not supported.
+ * observed while nobody watches, so events are not retroactive. The timer is
+ * `unref()`d, so it never keeps the process alive. Events are delivered to
+ * `addEventListener` listeners; the `on*` handler properties are not
+ * supported.
  *
  * Node extension: the hub-level events target the hub itself (Node's
  * `EventTarget` has no parent chain to bubble through), so a listener
@@ -51,7 +47,6 @@ export interface NodeSerialOptions {
  */
 export class NodeSerial extends EventTarget implements Serial {
   readonly #binding: BindingInterface;
-  readonly #interval: number;
   readonly #ports = new Map<string, NodeSerialPort>();
   #watcher: HotplugWatcher | undefined;
   #openPorts = 0;
@@ -80,10 +75,9 @@ export class NodeSerial extends EventTarget implements Serial {
     throwUnsupportedHandler('ondisconnect');
   }
 
-  constructor({ binding, pollingInterval }: NodeSerialOptions = {}) {
+  constructor({ binding }: NodeSerialOptions = {}) {
     super();
     this.#binding = binding ?? SerialPortDriver.binding;
-    this.#interval = pollingInterval ?? 500;
   }
 
   /**
@@ -133,7 +127,7 @@ export class NodeSerial extends EventTarget implements Serial {
    * re-baselines silently — events are not retroactive.
    */
   #updateWatching(): void {
-    if (this.#interval <= 0) {
+    if (HotplugWatcher.interval <= 0) {
       return;
     }
     const needed: boolean =
@@ -143,7 +137,7 @@ export class NodeSerial extends EventTarget implements Serial {
     if (needed && this.#watcher === undefined) {
       this.#watcher = new HotplugWatcher({
         binding: this.#binding,
-        interval: this.#interval,
+        interval: HotplugWatcher.interval,
         onAdded: (info: PortInfo): void => {
           this.#portAppeared(info);
         },

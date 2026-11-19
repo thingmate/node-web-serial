@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { SerialPortMock } from 'serialport';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { HotplugWatcher } from '../helpers.private/hotplug-watcher/hotplug-watcher.ts';
 import type { NodeSerialPort } from '../node-serial-port/node-serial-port.ts';
 import { NodeSerial } from './node-serial.ts';
 
@@ -13,7 +14,6 @@ describe('NodeSerial', () => {
   it('throws when the on* handler surfaces are touched', () => {
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 0,
     });
     expect(() => serial.onconnect).toThrow(TypeError);
     expect(() => serial.onconnect).toThrow(/addEventListener\("connect", …\) instead/);
@@ -31,7 +31,6 @@ describe('NodeSerial', () => {
     SerialPortMock.binding.createPort('/dev/b');
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 0,
     });
     const ports = await serial.getPorts();
     expect(ports.length).toBe(2);
@@ -44,7 +43,6 @@ describe('NodeSerial', () => {
     SerialPortMock.binding.createPort('/dev/b');
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 0,
     });
     const listed = await serial.getPorts();
     const relisted = await serial.getPorts();
@@ -58,7 +56,6 @@ describe('NodeSerial', () => {
     SerialPortMock.binding.createPort('/dev/a', { vendorId: '10c4' });
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 0,
     });
     await expect(serial.requestPort({ filters: [{}] })).rejects.toThrow(TypeError);
     await expect(serial.requestPort({ filters: [{ usbProductId: 60000 }] })).rejects.toThrow(
@@ -70,7 +67,6 @@ describe('NodeSerial', () => {
     SerialPortMock.binding.createPort('/dev/a', { vendorId: '10c4', productId: 'ea60' });
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 0,
     });
     await expect(
       serial.requestPort({ filters: [{ usbVendorId: 0x10c4, usbProductId: 0x0001 }] }),
@@ -83,7 +79,6 @@ describe('NodeSerial', () => {
     SerialPortMock.binding.createPort('/dev/a', { vendorId: '10c4' });
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 0,
     });
     await expect(
       serial.requestPort({
@@ -96,7 +91,6 @@ describe('NodeSerial', () => {
     SerialPortMock.binding.createPort('/dev/a', { vendorId: '10c4' });
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 0,
     });
     await expect(
       serial.requestPort({
@@ -111,7 +105,6 @@ describe('NodeSerial', () => {
     SerialPortMock.binding.createPort('/dev/a', { vendorId: '10c4' });
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 0,
     });
     await expect(serial.requestPort({ filters: [{ usbVendorId: 0xffff }] })).rejects.toSatisfy(
       (error: unknown): boolean => error instanceof DOMException && error.name === 'NotFoundError',
@@ -123,7 +116,6 @@ describe('NodeSerial', () => {
     SerialPortMock.binding.createPort('/dev/b', { vendorId: '03eb' });
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 0,
     });
     const port = await serial.requestPort({ filters: [{ usbVendorId: 0x10c4 }] });
     expect(port.path).toBe('/dev/a');
@@ -134,7 +126,6 @@ describe('NodeSerial', () => {
     SerialPortMock.binding.createPort('/dev/b', { vendorId: '10c4' });
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 0,
     });
     await expect(serial.requestPort({ filters: [{ usbVendorId: 0x10c4 }] })).rejects.toThrow(
       /narrow/i,
@@ -152,23 +143,47 @@ describe('NodeSerial.hotplug', () => {
     vi.useRealTimers();
   });
 
-  it('does not poll when pollingInterval is 0', async () => {
-    const serial: NodeSerial = new NodeSerial({
-      binding: SerialPortMock.binding,
-      pollingInterval: 0,
-    });
+  it('does not poll when HotplugWatcher.interval is 0', async () => {
+    const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
     const listSpy = vi.spyOn(SerialPortMock.binding, 'list');
-    const hubEvents: string[] = [];
-    serial.addEventListener('connect', (): void => {
-      hubEvents.push('connect');
-    });
-    serial.addEventListener('disconnect', (): void => {
-      hubEvents.push('disconnect');
-    });
-    SerialPortMock.binding.createPort('/dev/a');
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(hubEvents).toEqual([]);
-    expect(listSpy).not.toHaveBeenCalled();
+    const defaultInterval: number = HotplugWatcher.interval;
+    try {
+      HotplugWatcher.interval = 0;
+      const hubEvents: string[] = [];
+      serial.addEventListener('connect', (): void => {
+        hubEvents.push('connect');
+      });
+      serial.addEventListener('disconnect', (): void => {
+        hubEvents.push('disconnect');
+      });
+      SerialPortMock.binding.createPort('/dev/a');
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(hubEvents).toEqual([]);
+      expect(listSpy).not.toHaveBeenCalled();
+    } finally {
+      HotplugWatcher.interval = defaultInterval;
+    }
+  });
+
+  it('reads the interval at each watching start', async () => {
+    const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
+    const listSpy = vi.spyOn(SerialPortMock.binding, 'list');
+    const defaultInterval: number = HotplugWatcher.interval;
+    const listener = (): void => {};
+    try {
+      HotplugWatcher.interval = 0;
+      serial.addEventListener('connect', listener);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(listSpy).not.toHaveBeenCalled();
+      // The next watching start picks up the fresh value: a need recompute
+      // (here, re-subscribing) is what creates the watcher.
+      HotplugWatcher.interval = 500;
+      serial.addEventListener('connect', listener);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(listSpy.mock.calls.length).toBeGreaterThan(0);
+    } finally {
+      HotplugWatcher.interval = defaultInterval;
+    }
   });
 
   it('enables polling by default', async () => {
@@ -186,7 +201,6 @@ describe('NodeSerial.hotplug', () => {
   it('fires hub connect when a port appears and creates its port object', async () => {
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 500,
     });
     let hubConnects: number = 0;
     let eventBubbles: boolean | undefined;
@@ -210,7 +224,6 @@ describe('NodeSerial.hotplug', () => {
     SerialPortMock.binding.createPort('/dev/a');
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 500,
     });
     await vi.advanceTimersByTimeAsync(0);
     const port: NodeSerialPort = (await serial.getPorts())[0]!;
@@ -233,7 +246,6 @@ describe('NodeSerial.hotplug', () => {
     SerialPortMock.binding.createPort('/dev/a');
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 500,
     });
     await vi.advanceTimersByTimeAsync(0);
     const port: NodeSerialPort = (await serial.getPorts())[0]!;
@@ -254,7 +266,6 @@ describe('NodeSerial.hotplug', () => {
     SerialPortMock.binding.createPort('/dev/a');
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 500,
     });
     // A closed port's port-level listener does not start the hub watching
     // (documented deviation) — the hub-level subscription does.
@@ -279,7 +290,6 @@ describe('NodeSerial.hotplug', () => {
     SerialPortMock.binding.createPort('/dev/a');
     const serial: NodeSerial = new NodeSerial({
       binding: SerialPortMock.binding,
-      pollingInterval: 500,
     });
     await vi.advanceTimersByTimeAsync(0);
     const port: NodeSerialPort = (await serial.getPorts())[0]!;
