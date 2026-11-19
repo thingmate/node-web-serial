@@ -21,6 +21,8 @@ export class NodeSerialPort {
   #bufferSize = 255;
   #readable: ReadableStream<Uint8Array> | null = null;
   #readFatal = false;
+  #writable: WritableStream<Uint8Array> | null = null;
+  #writeFatal = false;
 
   constructor({
     path,
@@ -180,6 +182,62 @@ export class NodeSerialPort {
         ),
       );
       this.#readable = null;
+    }
+  }
+
+  /**
+   * Outgoing bytes as a web stream, or `null` while the port is not open.
+   * Chunks are queued with byte-counting backpressure (`bufferSize` bytes of
+   * high water mark, the specification's model) and each chunk is copied
+   * before reaching the driver. A driver write error errors the stream with
+   * an `UnknownError` DOMException and releases it — the next access creates
+   * a fresh stream. Only a driver disconnect makes `writable` permanently
+   * `null`.
+   *
+   * Closing the stream drains the driver (waits until everything was
+   * transmitted); aborting it discards queued chunks without touching the
+   * operating system buffers.
+   */
+  get writable(): WritableStream<Uint8Array> | null {
+    if (this.#writable !== null) {
+      return this.#writable;
+    }
+    if (this.#state !== 'opened' || this.#writeFatal) {
+      return null;
+    }
+    const port: BindingPortInterface = this.#port!;
+    this.#writable = new WritableStream<Uint8Array>(
+      {
+        write: async (chunk: Uint8Array): Promise<void> => {
+          await this.#writeChunk(port, chunk);
+        },
+        close: async (): Promise<void> => {
+          await port.drain();
+          this.#writable = null;
+        },
+        abort: async (): Promise<void> => {
+          this.#writable = null;
+        },
+      },
+      {
+        highWaterMark: this.#bufferSize,
+        size: (chunk: Uint8Array): number => chunk.byteLength,
+      },
+    );
+    return this.#writable;
+  }
+
+  /** Write algorithm of the writable stream: copy the chunk, then hand it to the driver. */
+  async #writeChunk(port: BindingPortInterface, chunk: Uint8Array): Promise<void> {
+    const buffer: Buffer = Buffer.from(chunk);
+    try {
+      await port.write(buffer);
+    } catch (error) {
+      this.#writable = null;
+      throw specError(
+        'UnknownError',
+        `Failed to write to the serial port: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 }

@@ -9,22 +9,43 @@ import type {
 import { NodeSerialPort } from './node-serial-port.ts';
 
 /**
- * Test double binding whose read side records every request and can be
- * switched between delivering canned data and failing, which `binding-mock`
- * cannot express.
+ * Test double binding whose read and write sides record every request and can
+ * be switched between delivering canned data, failing, and blocking, which
+ * `binding-mock` cannot express.
  */
-class GRecordingReadBinding implements BindingInterface {
+class GRecordingBinding implements BindingInterface {
   readonly reads: Array<{ offset: number; length: number }> = [];
+  readonly writes: Buffer[] = [];
+  drained = false;
+  flushed = false;
   #data: Buffer;
-  #failing: boolean;
+  #failingRead: boolean;
+  #failingWrite: boolean;
+  #blockWrite: boolean;
 
-  constructor({ data, failing }: { data?: Buffer; failing?: boolean }) {
+  constructor({
+    data,
+    failingRead,
+    failingWrite,
+    blockWrite,
+  }: {
+    data?: Buffer;
+    failingRead?: boolean;
+    failingWrite?: boolean;
+    blockWrite?: boolean;
+  } = {}) {
     this.#data = data ?? Buffer.alloc(0);
-    this.#failing = failing ?? false;
+    this.#failingRead = failingRead ?? false;
+    this.#failingWrite = failingWrite ?? false;
+    this.#blockWrite = blockWrite ?? false;
   }
 
-  setFailing(failing: boolean): void {
-    this.#failing = failing;
+  setFailingRead(failing: boolean): void {
+    this.#failingRead = failing;
+  }
+
+  setFailingWrite(failing: boolean): void {
+    this.#failingWrite = failing;
   }
 
   list(): Promise<PortInfo[]> {
@@ -38,7 +59,7 @@ class GRecordingReadBinding implements BindingInterface {
       close: async () => {},
       read: async (buffer: Buffer, offset: number, length: number) => {
         this.reads.push({ offset, length });
-        if (this.#failing) {
+        if (this.#failingRead) {
           throw new Error('driver read failure');
         }
         const chunk: Buffer = this.#data.subarray(0, length);
@@ -46,13 +67,25 @@ class GRecordingReadBinding implements BindingInterface {
         this.#data = this.#data.subarray(chunk.length);
         return { buffer, bytesRead: chunk.length };
       },
-      write: async () => {},
+      write: async (buffer: Buffer) => {
+        if (this.#blockWrite) {
+          return new Promise<void>(() => {});
+        }
+        if (this.#failingWrite) {
+          throw new Error('driver write failure');
+        }
+        this.writes.push(Buffer.from(buffer));
+      },
       update: async () => {},
       set: async () => {},
       get: async () => ({ cts: false, dsr: false, dcd: false }),
       getBaudRate: async () => ({ baudRate: 9600 }),
-      flush: async () => {},
-      drain: async () => {},
+      flush: async () => {
+        this.flushed = true;
+      },
+      drain: async () => {
+        this.drained = true;
+      },
     };
   }
 }
@@ -157,10 +190,10 @@ describe('NodeSerialPort.open', () => {
 
 /** Captures the mock port opened through `serialport`'s mock binding so tests can feed it data. */
 class GMockPortCapture implements BindingInterface {
-  #opened: { emitData(data: Buffer | string): void } | undefined;
+  #opened: { emitData(data: Buffer | string): void; lastWrite: Buffer | null } | undefined;
 
-  createPort(path: string): void {
-    SerialPortMock.binding.createPort(path);
+  createPort(path: string, options?: { echo?: boolean; record?: boolean }): void {
+    SerialPortMock.binding.createPort(path, options);
   }
 
   reset(): void {
@@ -173,12 +206,16 @@ class GMockPortCapture implements BindingInterface {
 
   async open(options: OpenOptions): Promise<BindingPortInterface> {
     const opened = await SerialPortMock.binding.open(options);
-    this.#opened = opened as { emitData(data: Buffer | string): void };
+    this.#opened = opened as { emitData(data: Buffer | string): void; lastWrite: Buffer | null };
     return opened;
   }
 
   emitData(data: Buffer | string): void {
     this.#opened?.emitData(data);
+  }
+
+  get lastWrite(): Buffer | null {
+    return this.#opened?.lastWrite ?? null;
   }
 }
 
@@ -222,7 +259,7 @@ describe('NodeSerialPort.readable', () => {
   });
 
   it('performs no OS read until a consumer pulls', async () => {
-    const binding: GRecordingReadBinding = new GRecordingReadBinding({ data: Buffer.from('abc') });
+    const binding: GRecordingBinding = new GRecordingBinding({ data: Buffer.from('abc') });
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
     await new Promise<void>((resolve: () => void) => { setImmediate(resolve); });
@@ -257,7 +294,7 @@ describe('NodeSerialPort.readable', () => {
   });
 
   it('surfaces a driver read error as UnknownError and recreates a fresh readable afterwards', async () => {
-    const binding: GRecordingReadBinding = new GRecordingReadBinding({ data: Buffer.from('ok'), failing: true });
+    const binding: GRecordingBinding = new GRecordingBinding({ data: Buffer.from('ok'), failingRead: true });
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
     const first: ReadableStream<Uint8Array> | null = port.readable;
@@ -269,9 +306,90 @@ describe('NodeSerialPort.readable', () => {
     const second: ReadableStream<Uint8Array> | null = port.readable;
     expect(second).not.toBeNull();
     expect(second).not.toBe(first);
-    binding.setFailing(false);
+    binding.setFailingRead(false);
     const recovered: ReadableStreamDefaultReader<Uint8Array> = second!.getReader();
     const result: ReadableStreamReadResult<Uint8Array> = await recovered.read();
     expect(Array.from(result.value ?? [])).toEqual([111, 107]);
+  });
+});
+
+describe('NodeSerialPort.writable', () => {
+  beforeEach(() => {
+    SerialPortMock.binding.reset();
+  });
+
+  it('returns null before open and the same stream instance while open', async () => {
+    const mock: GMockPortCapture = new GMockPortCapture();
+    mock.createPort('/dev/tty.mock');
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: mock });
+    expect(port.writable).toBeNull();
+    await port.open({ baudRate: 9600 });
+    const first: WritableStream<Uint8Array> | null = port.writable;
+    expect(first).not.toBeNull();
+    expect(port.writable).toBe(first);
+  });
+
+  it('applies byte-counting backpressure', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ blockWrite: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600, bufferSize: 255 });
+    const writer: WritableStreamDefaultWriter<Uint8Array> = port.writable!.getWriter();
+    const chunk: Uint8Array = new Uint8Array(10);
+    for (let index = 0; index < 26; index += 1) {
+      writer.write(chunk);
+    }
+    expect(writer.desiredSize).toBeLessThan(0);
+  });
+
+  it('writes a copied buffer through the binding', async () => {
+    const mock: GMockPortCapture = new GMockPortCapture();
+    mock.createPort('/dev/tty.mock');
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: mock });
+    await port.open({ baudRate: 9600 });
+    const writer: WritableStreamDefaultWriter<Uint8Array> = port.writable!.getWriter();
+    const chunk: Uint8Array = new Uint8Array([1, 2, 3]);
+    await writer.write(chunk);
+    chunk[0] = 9;
+    expect(Array.from(mock.lastWrite ?? [])).toEqual([1, 2, 3]);
+  });
+
+  it('rejects a write with UnknownError when the driver fails, and recreates a fresh writable', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ failingWrite: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    const first: WritableStream<Uint8Array> | null = port.writable;
+    const writer: WritableStreamDefaultWriter<Uint8Array> = first!.getWriter();
+    await expect(writer.write(new Uint8Array([1]))).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'UnknownError',
+    );
+    const second: WritableStream<Uint8Array> | null = port.writable;
+    expect(second).not.toBeNull();
+    expect(second).not.toBe(first);
+    binding.setFailingWrite(false);
+    const recovered: WritableStreamDefaultWriter<Uint8Array> = second!.getWriter();
+    await expect(recovered.write(new Uint8Array([2]))).resolves.toBeUndefined();
+  });
+
+  it('resolves stream close() after draining', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding();
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    const writer: WritableStreamDefaultWriter<Uint8Array> = port.writable!.getWriter();
+    await writer.write(new Uint8Array([1]));
+    await writer.close();
+    expect(binding.drained).toBe(true);
+  });
+
+  it('aborts by discarding queued writes without touching the OS buffers', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ blockWrite: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    const writer: WritableStreamDefaultWriter<Uint8Array> = port.writable!.getWriter();
+    const inFlight: Promise<void> = writer.write(new Uint8Array([1]));
+    writer.write(new Uint8Array([2])).catch(() => {});
+    writer.abort(new Error('aborted by the test'));
+    await expect(inFlight).rejects.toThrow();
+    await new Promise<void>((resolve: () => void) => { setImmediate(resolve); });
+    expect(binding.flushed).toBe(false);
   });
 });
