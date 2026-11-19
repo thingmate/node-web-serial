@@ -5,6 +5,7 @@ import type { SerialPortRequestOptions } from '../../types/serial-port-request-o
 import type { Serial } from '../../types/serial/serial.ts';
 import { NodeSerialPort } from '../node-serial-port/node-serial-port.ts';
 import { specError } from '../spec-errors/spec-errors.private.ts';
+import { throwUnsupportedHandler } from '../throw-unsupported-handler/throw-unsupported-handler.private.ts';
 
 /**
  * The Web Serial API entry point for Node.js, mirroring the `Serial` interface
@@ -20,34 +21,38 @@ export class NodeSerial extends EventTarget implements Serial {
   readonly #ports = new Map<string, NodeSerialPort>();
 
   /**
-   * Not usable in Node: hub `connect`/`disconnect` events never fire because
-   * Node has no hotplug detection. Reading or assigning throws a `TypeError`.
+   * Not usable in Node: the `connect` event never fires without hotplug
+   * detection. Reading or assigning throws a `TypeError`.
    */
   get onconnect(): ((this: Serial, event: Event) => any) | null {
-    throw new TypeError(
-      '"onconnect" is not supported in Node: the "connect" event never fires without hotplug detection.',
+    return throwUnsupportedHandler(
+      'onconnect',
+      'the "connect" event never fires without hotplug detection.',
     );
   }
 
   set onconnect(_handler: ((this: Serial, event: Event) => any) | null) {
-    throw new TypeError(
-      '"onconnect" is not supported in Node: the "connect" event never fires without hotplug detection.',
+    throwUnsupportedHandler(
+      'onconnect',
+      'the "connect" event never fires without hotplug detection.',
     );
   }
 
   /**
-   * Not usable in Node: hub `connect`/`disconnect` events never fire because
-   * Node has no hotplug detection. Reading or assigning throws a `TypeError`.
+   * Not usable in Node: the `disconnect` event never fires without hotplug
+   * detection. Reading or assigning throws a `TypeError`.
    */
   get ondisconnect(): ((this: Serial, event: Event) => any) | null {
-    throw new TypeError(
-      '"ondisconnect" is not supported in Node: the "disconnect" event never fires without hotplug detection.',
+    return throwUnsupportedHandler(
+      'ondisconnect',
+      'the "disconnect" event never fires without hotplug detection.',
     );
   }
 
   set ondisconnect(_handler: ((this: Serial, event: Event) => any) | null) {
-    throw new TypeError(
-      '"ondisconnect" is not supported in Node: the "disconnect" event never fires without hotplug detection.',
+    throwUnsupportedHandler(
+      'ondisconnect',
+      'the "disconnect" event never fires without hotplug detection.',
     );
   }
 

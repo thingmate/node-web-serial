@@ -6,6 +6,7 @@ import type { SerialOutputSignals } from '../../types/serial-output-signals/seri
 import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-info.ts';
 import type { SerialPort } from '../../types/serial-port/serial-port.ts';
 import { specError } from '../spec-errors/spec-errors.private.ts';
+import { throwUnsupportedHandler } from '../throw-unsupported-handler/throw-unsupported-handler.private.ts';
 
 /**
  * A Web Serial API `SerialPort` implementation for Node.js, speaking to real
@@ -31,36 +32,39 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
   #signals = { dtr: true, rts: true, brk: false };
 
   /**
-   * Not usable in Node: the `connect` event never fires because Node has no
-   * hotplug detection. Reading or assigning throws a `TypeError` — listen for
-   * real events with `addEventListener` instead.
+   * Not usable in Node: the `connect` event never fires without hotplug
+   * detection. Reading or assigning throws a `TypeError`.
    */
   get onconnect(): ((this: SerialPort, event: Event) => any) | null {
-    throw new TypeError(
-      '"onconnect" is not supported in Node: the "connect" event never fires without hotplug detection.',
+    return throwUnsupportedHandler(
+      'onconnect',
+      'the "connect" event never fires without hotplug detection.',
     );
   }
 
   set onconnect(_handler: ((this: SerialPort, event: Event) => any) | null) {
-    throw new TypeError(
-      '"onconnect" is not supported in Node: the "connect" event never fires without hotplug detection.',
+    throwUnsupportedHandler(
+      'onconnect',
+      'the "connect" event never fires without hotplug detection.',
     );
   }
 
   /**
    * Not usable as a property in Node: the `disconnect` event is delivered to
-   * `addEventListener("disconnect", …)` listeners only. Reading or assigning
-   * throws a `TypeError`.
+   * `addEventListener` listeners only. Reading or assigning throws a
+   * `TypeError`.
    */
   get ondisconnect(): ((this: SerialPort, event: Event) => any) | null {
-    throw new TypeError(
-      '"ondisconnect" is not supported as a property in Node: listen with addEventListener("disconnect", …).',
+    return throwUnsupportedHandler(
+      'ondisconnect',
+      'listen with addEventListener("disconnect", …) instead.',
     );
   }
 
   set ondisconnect(_handler: ((this: SerialPort, event: Event) => any) | null) {
-    throw new TypeError(
-      '"ondisconnect" is not supported as a property in Node: listen with addEventListener("disconnect", …).',
+    throwUnsupportedHandler(
+      'ondisconnect',
+      'listen with addEventListener("disconnect", …) instead.',
     );
   }
 
