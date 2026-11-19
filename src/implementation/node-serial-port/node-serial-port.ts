@@ -5,6 +5,7 @@ import type { SerialOptions } from '../../types/serial-options/serial-options.ts
 import type { SerialOutputSignals } from '../../types/serial-output-signals/serial-output-signals.ts';
 import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-info.ts';
 import type { SerialPort } from '../../types/serial-port/serial-port.ts';
+import { notifyPresence } from '../port-presence/port-presence.private.ts';
 import { specError } from '../spec-errors/spec-errors.private.ts';
 import { throwUnsupportedHandler } from '../throw-unsupported-handler/throw-unsupported-handler.private.ts';
 
@@ -420,6 +421,35 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
       ringIndicator: false,
       dataSetReady: status.dsr,
     };
+  }
+
+  /**
+   * Package-internal presence update from the hub's watcher: `true` when the
+   * port reappeared in the system, `false` when it disappeared. Absence of an
+   * open port runs the shared disconnect algorithm; reappearance resets the
+   * fatal flags so the streams re-create, the way the spec's stream getters
+   * consult `[[connected]]`.
+   */
+  [notifyPresence](present: boolean): void {
+    if (present) {
+      if (this.#connected) {
+        return;
+      }
+      this.#connected = true;
+      this.#readFatal = false;
+      this.#writeFatal = false;
+      this.dispatchEvent(new Event('connect', { bubbles: true }));
+      return;
+    }
+    if (!this.#connected) {
+      return;
+    }
+    if (this.#state === 'opened') {
+      this.#disconnect('The serial port was disconnected from the system.');
+      return;
+    }
+    this.#connected = false;
+    this.dispatchEvent(new Event('disconnect', { bubbles: true }));
   }
 
   /**

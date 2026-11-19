@@ -6,6 +6,7 @@ import type {
 } from '@serialport/bindings-cpp';
 import { SerialPortMock } from 'serialport';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { notifyPresence } from '../port-presence/port-presence.private.ts';
 import { NodeSerialPort } from './node-serial-port.ts';
 
 /**
@@ -800,5 +801,98 @@ describe('NodeSerialPort.signals', () => {
     await expect(port.getSignals()).rejects.toSatisfy(
       (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
     );
+  });
+});
+
+describe('NodeSerialPort.presence', () => {
+  beforeEach(() => {
+    SerialPortMock.binding.reset();
+  });
+
+  it('reports absence of a closed port as a disconnect', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding();
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    await port.close();
+    let listenerCalls: number = 0;
+    port.addEventListener('disconnect', (): void => {
+      listenerCalls += 1;
+    });
+    port[notifyPresence](false);
+    expect(port.connected).toBe(false);
+    expect(listenerCalls).toBe(1);
+  });
+
+  it('runs the disconnect algorithm when the hub reports absence of an open port', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding();
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    port.readable!.getReader();
+    let listenerCalls: number = 0;
+    port.addEventListener('disconnect', (): void => {
+      listenerCalls += 1;
+    });
+    port[notifyPresence](false);
+    expect(port.connected).toBe(false);
+    expect(port.readable).toBeNull();
+    expect(port.writable).toBeNull();
+    expect(listenerCalls).toBe(1);
+  });
+
+  it('makes a replugged port usable again without closing it', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ data: Buffer.from('ok') });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    let connectCalls: number = 0;
+    port.addEventListener('connect', (): void => {
+      connectCalls += 1;
+    });
+    port[notifyPresence](false);
+    port[notifyPresence](true);
+    expect(connectCalls).toBe(1);
+    expect(port.connected).toBe(true);
+    const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
+    const result: ReadableStreamReadResult<Uint8Array> = await reader.read();
+    expect(Array.from(result.value ?? [])).toEqual([111, 107]);
+  });
+
+  it('fires disconnect exactly once when a driver disconnect is followed by reported absence', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ disconnectedRead: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    let listenerCalls: number = 0;
+    port.addEventListener('disconnect', (): void => {
+      listenerCalls += 1;
+    });
+    const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
+    await expect(reader.read()).rejects.toThrow();
+    port[notifyPresence](false);
+    expect(listenerCalls).toBe(1);
+  });
+
+  it('ignores repeated absence reports', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding();
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    await port.close();
+    let listenerCalls: number = 0;
+    port.addEventListener('disconnect', (): void => {
+      listenerCalls += 1;
+    });
+    port[notifyPresence](false);
+    port[notifyPresence](false);
+    expect(listenerCalls).toBe(1);
+  });
+
+  it('ignores a connect report for an already connected port', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding();
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    let listenerCalls: number = 0;
+    port.addEventListener('connect', (): void => {
+      listenerCalls += 1;
+    });
+    port[notifyPresence](true);
+    expect(listenerCalls).toBe(0);
   });
 });
