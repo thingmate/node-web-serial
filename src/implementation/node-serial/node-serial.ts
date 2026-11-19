@@ -3,11 +3,25 @@ import { SerialPort as SerialPortDriver } from 'serialport';
 import type { SerialPortFilter } from '../../types/serial-port-filter/serial-port-filter.ts';
 import type { SerialPortRequestOptions } from '../../types/serial-port-request-options/serial-port-request-options.ts';
 import type { Serial } from '../../types/serial/serial.ts';
-import { HotplugWatcher } from '../hotplug-watcher/hotplug-watcher.ts';
+import { HotplugWatcher } from '../helpers.private/hotplug-watcher/hotplug-watcher.ts';
+import { presenceChannels } from '../helpers.private/port-presence/port-presence.ts';
+import { specError } from '../helpers.private/spec-errors/spec-errors.ts';
+import { throwUnsupportedHandler } from '../helpers.private/throw-unsupported-handler/throw-unsupported-handler.ts';
 import { NodeSerialPort } from '../node-serial-port/node-serial-port.ts';
-import { presenceChannels } from '../port-presence/port-presence.private.ts';
-import { specError } from '../spec-errors/spec-errors.private.ts';
-import { throwUnsupportedHandler } from '../throw-unsupported-handler/throw-unsupported-handler.private.ts';
+
+/** Options for constructing a {@linkcode NodeSerial}. */
+export interface NodeSerialOptions {
+  /**
+   * The binding spoken to; defaults to the `serialport` package's detected
+   * system binding. Test doubles pass their own.
+   */
+  readonly binding?: BindingInterface;
+  /**
+   * Milliseconds between two polls of the port list — `500` by default; a
+   * value of `0` or less disables the polling.
+   */
+  readonly pollingInterval?: number;
+}
 
 /**
  * The Web Serial API entry point for Node.js, mirroring the `Serial` interface
@@ -59,10 +73,7 @@ export class NodeSerial extends EventTarget implements Serial {
     throwUnsupportedHandler('ondisconnect');
   }
 
-  constructor({
-    binding,
-    pollingInterval,
-  }: { binding?: BindingInterface; pollingInterval?: number } = {}) {
+  constructor({ binding, pollingInterval }: NodeSerialOptions = {}) {
     super();
     this.#binding = binding ?? SerialPortDriver.binding;
     const interval: number = pollingInterval ?? 500;

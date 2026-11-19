@@ -1,5 +1,17 @@
 import type { BindingInterface, PortInfo } from '@serialport/bindings-cpp';
 
+/** Options for constructing a {@linkcode HotplugWatcher}. */
+export interface HotplugWatcherOptions {
+  /** The binding polled for the list of present ports. */
+  readonly binding: BindingInterface;
+  /** Milliseconds between two polls. */
+  readonly interval: number;
+  /** Called for each port present in a snapshot but absent from the previous one. */
+  readonly onAdded: (info: PortInfo) => void;
+  /** Called for each port path absent from a snapshot but present in the previous one. */
+  readonly onRemoved: (path: string) => void;
+}
+
 /**
  * Watches a serial binding for ports appearing and disappearing by polling
  * `list()` on an interval — the Node stand-in for the operating system's
@@ -18,17 +30,7 @@ export class HotplugWatcher {
   #baseline = false;
   #inFlight = false;
 
-  constructor({
-    binding,
-    interval,
-    onAdded,
-    onRemoved,
-  }: {
-    binding: BindingInterface;
-    interval: number;
-    onAdded: (info: PortInfo) => void;
-    onRemoved: (path: string) => void;
-  }) {
+  constructor({ binding, interval, onAdded, onRemoved }: HotplugWatcherOptions) {
     this.#binding = binding;
     this.#onAdded = onAdded;
     this.#onRemoved = onRemoved;

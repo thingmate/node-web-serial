@@ -1,4 +1,4 @@
-import type { NodeSerialPort } from '../node-serial-port/node-serial-port.ts';
+import type { NodeSerialPort } from '../../node-serial-port/node-serial-port.ts';
 
 /**
  * Package-internal channel through which the hub delivers presence updates to

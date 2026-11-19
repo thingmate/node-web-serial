@@ -1,13 +1,35 @@
-import type { BindingInterface, BindingPortInterface, OpenOptions } from '@serialport/bindings-cpp';
+import type {
+  BindingInterface,
+  BindingPortInterface,
+  OpenOptions,
+  PortStatus,
+} from '@serialport/bindings-cpp';
 import { SerialPort as SerialPortDriver } from 'serialport';
 import type { SerialInputSignals } from '../../types/serial-input-signals/serial-input-signals.ts';
 import type { SerialOptions } from '../../types/serial-options/serial-options.ts';
 import type { SerialOutputSignals } from '../../types/serial-output-signals/serial-output-signals.ts';
 import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-info.ts';
 import type { SerialPort } from '../../types/serial-port/serial-port.ts';
-import { presenceChannels } from '../port-presence/port-presence.private.ts';
-import { specError } from '../spec-errors/spec-errors.private.ts';
-import { throwUnsupportedHandler } from '../throw-unsupported-handler/throw-unsupported-handler.private.ts';
+import type {
+  CanceledFlaggedError,
+  DisconnectFlaggedError,
+} from '../helpers.private/binding-errors/binding-errors.ts';
+import { presenceChannels } from '../helpers.private/port-presence/port-presence.ts';
+import { specError } from '../helpers.private/spec-errors/spec-errors.ts';
+import { throwUnsupportedHandler } from '../helpers.private/throw-unsupported-handler/throw-unsupported-handler.ts';
+
+/** Options for constructing a {@linkcode NodeSerialPort}. */
+export interface NodeSerialPortOptions {
+  /** The operating system path of the port, for example `/dev/ttyUSB0` or `COM3`. */
+  readonly path: string;
+  /** USB or Bluetooth identity to report through `getInfo()`; defaults to an empty one. */
+  readonly info?: SerialPortInfo;
+  /**
+   * The binding spoken to; defaults to the `serialport` package's detected
+   * system binding. Test doubles pass their own.
+   */
+  readonly binding?: BindingInterface;
+}
 
 /**
  * A Web Serial API `SerialPort` implementation for Node.js, speaking to real
@@ -58,15 +80,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     throwUnsupportedHandler('ondisconnect');
   }
 
-  constructor({
-    path,
-    info,
-    binding,
-  }: {
-    path: string;
-    info?: SerialPortInfo;
-    binding?: BindingInterface;
-  }) {
+  constructor({ path, info, binding }: NodeSerialPortOptions) {
     super();
     this.#path = path;
     this.#info = info ?? {};
@@ -217,7 +231,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     try {
       // The binding writes at `buffer + offset` (the `fs.read` model): the view
       // is wrapped as an already-offset sub-buffer, so the binding offset is 0.
-      const { bytesRead }: { buffer: Buffer; bytesRead: number } = await port.read(
+      const { bytesRead } = await port.read(
         Buffer.from(view.buffer, view.byteOffset, view.byteLength),
         0,
         view.byteLength,
@@ -323,14 +337,14 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
   #isDisconnect(error: unknown): boolean {
     return (
       error instanceof Error &&
-      ((error as { disconnect?: boolean }).disconnect === true ||
-        (error as { disconnected?: boolean }).disconnected === true)
+      ((error as DisconnectFlaggedError).disconnect === true ||
+        (error as DisconnectFlaggedError).disconnected === true)
     );
   }
 
   /** Whether a driver error reports an orderly cancellation, as raised when closing in-flight operations. */
   #isCanceled(error: unknown): boolean {
-    return error instanceof Error && (error as { canceled?: boolean }).canceled === true;
+    return error instanceof Error && (error as CanceledFlaggedError).canceled === true;
   }
 
   /**
@@ -418,7 +432,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
       throw specError('InvalidStateError', 'The serial port is not open.');
     }
     const port: BindingPortInterface = this.#port!;
-    let status: { cts: boolean; dsr: boolean; dcd: boolean };
+    let status: PortStatus;
     try {
       status = await port.get();
     } catch (error) {

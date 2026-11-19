@@ -3,11 +3,35 @@ import type {
   BindingPortInterface,
   OpenOptions,
   PortInfo,
+  PortStatus,
+  SetOptions,
 } from '@serialport/bindings-cpp';
 import { SerialPortMock } from 'serialport';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { presenceChannels } from '../port-presence/port-presence.private.ts';
+import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-info.ts';
+import type { DisconnectFlaggedError } from '../helpers.private/binding-errors/binding-errors.ts';
+import { presenceChannels } from '../helpers.private/port-presence/port-presence.ts';
 import { NodeSerialPort } from './node-serial-port.ts';
+
+/** A writable view of the port info, to prove `getInfo()` hands out fresh copies. */
+type MutablePortInfo = { -readonly [GKey in keyof SerialPortInfo]: SerialPortInfo[GKey] };
+
+/** Options for constructing a {@linkcode GRecordingBinding}. */
+interface GRecordingBindingOptions {
+  data?: Buffer;
+  failingRead?: boolean;
+  failingWrite?: boolean;
+  blockWrite?: boolean;
+  disconnectedRead?: boolean;
+  disconnectedWrite?: boolean;
+  failingDrain?: boolean;
+  failingGet?: boolean;
+  failingSet?: boolean;
+  disconnectedSet?: boolean;
+  failingOpen?: boolean;
+  bindingDisconnectFlag?: boolean;
+  status?: PortStatus;
+}
 
 /**
  * Test double binding whose read and write sides record every request and can
@@ -18,7 +42,7 @@ class GRecordingBinding implements BindingInterface {
   readonly reads: Array<{ offset: number; length: number }> = [];
   opens = 0;
   readonly writes: Buffer[] = [];
-  readonly sets: Array<{ brk?: boolean; dtr?: boolean; rts?: boolean }> = [];
+  readonly sets: SetOptions[] = [];
   drained = false;
   flushed = false;
   #data: Buffer;
@@ -33,7 +57,7 @@ class GRecordingBinding implements BindingInterface {
   #failingOpen: boolean;
   #bindingDisconnectFlag: boolean;
   #disconnectedSet: boolean;
-  #status: { cts: boolean; dsr: boolean; dcd: boolean };
+  #status: PortStatus;
 
   constructor({
     data,
@@ -49,21 +73,7 @@ class GRecordingBinding implements BindingInterface {
     failingOpen,
     bindingDisconnectFlag,
     status,
-  }: {
-    data?: Buffer;
-    failingRead?: boolean;
-    failingWrite?: boolean;
-    blockWrite?: boolean;
-    disconnectedRead?: boolean;
-    disconnectedWrite?: boolean;
-    failingDrain?: boolean;
-    failingGet?: boolean;
-    failingSet?: boolean;
-    disconnectedSet?: boolean;
-    failingOpen?: boolean;
-    bindingDisconnectFlag?: boolean;
-    status?: { cts: boolean; dsr: boolean; dcd: boolean };
-  } = {}) {
+  }: GRecordingBindingOptions = {}) {
     this.#data = data ?? Buffer.alloc(0);
     this.#failingRead = failingRead ?? false;
     this.#failingWrite = failingWrite ?? false;
@@ -117,9 +127,9 @@ class GRecordingBinding implements BindingInterface {
         if (this.#disconnectedRead) {
           const error: Error = new Error('device detached');
           if (this.#bindingDisconnectFlag) {
-            (error as { disconnect?: boolean }).disconnect = true;
+            (error as DisconnectFlaggedError).disconnect = true;
           } else {
-            (error as { disconnected?: boolean }).disconnected = true;
+            (error as DisconnectFlaggedError).disconnected = true;
           }
           throw error;
         }
@@ -137,7 +147,7 @@ class GRecordingBinding implements BindingInterface {
         }
         if (this.#disconnectedWrite) {
           const error: Error = new Error('device detached');
-          (error as { disconnected?: boolean }).disconnected = true;
+          (error as DisconnectFlaggedError).disconnected = true;
           throw error;
         }
         if (this.#failingWrite) {
@@ -146,10 +156,10 @@ class GRecordingBinding implements BindingInterface {
         this.writes.push(Buffer.from(buffer));
       },
       update: async () => {},
-      set: async (options: { brk?: boolean; dtr?: boolean; rts?: boolean }) => {
+      set: async (options: SetOptions) => {
         if (this.#disconnectedSet) {
           const error: Error = new Error('device detached');
-          (error as { disconnected?: boolean }).disconnected = true;
+          (error as DisconnectFlaggedError).disconnected = true;
           throw error;
         }
         if (this.#failingSet) {
@@ -201,7 +211,7 @@ describe('NodeSerialPort', () => {
       path: '/dev/ttyUSB0',
       info: { usbVendorId: 0x10c4 },
     });
-    (port.getInfo() as { usbVendorId: number }).usbVendorId = 0x123;
+    (port.getInfo() as MutablePortInfo).usbVendorId = 0x123;
     expect(port.getInfo()).toEqual({ usbVendorId: 0x10c4 });
   });
 
@@ -412,11 +422,23 @@ describe('NodeSerialPort.close', () => {
   });
 });
 
+/** The shape of the port object `serialport`'s mock binding hands back on open. */
+interface MockOpenedPort {
+  emitData(data: Buffer | string): void;
+  lastWrite: Buffer | null;
+}
+
+/** Options `serialport`'s mock binding accepts when creating a fake port. */
+interface MockCreatePortOptions {
+  echo?: boolean;
+  record?: boolean;
+}
+
 /** Captures the mock port opened through `serialport`'s mock binding so tests can feed it data. */
 class GMockPortCapture implements BindingInterface {
-  #opened: { emitData(data: Buffer | string): void; lastWrite: Buffer | null } | undefined;
+  #opened: MockOpenedPort | undefined;
 
-  createPort(path: string, options?: { echo?: boolean; record?: boolean }): void {
+  createPort(path: string, options?: MockCreatePortOptions): void {
     SerialPortMock.binding.createPort(path, options);
   }
 
@@ -430,7 +452,7 @@ class GMockPortCapture implements BindingInterface {
 
   async open(options: OpenOptions): Promise<BindingPortInterface> {
     const opened = await SerialPortMock.binding.open(options);
-    this.#opened = opened as { emitData(data: Buffer | string): void; lastWrite: Buffer | null };
+    this.#opened = opened as MockOpenedPort;
     return opened;
   }
 
