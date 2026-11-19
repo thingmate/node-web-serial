@@ -1,9 +1,20 @@
 {
   "name": "@thingmate/node-web-serial",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "type": "module",
-  "description": "WebSerial API for Nodejs",
-  "keywords": [],
+  "description": "Web Serial API for Node.js: spec-faithful Serial and SerialPort on top of serialport bindings",
+  "keywords": [
+    "web-serial",
+    "web-serial-api",
+    "serial",
+    "serial-port",
+    "serialport",
+    "nodejs",
+    "typescript",
+    "streams",
+    "hotplug",
+    "eventtarget"
+  ],
   "author": "Valentin Richard",
   "license": "MIT",
   "repository": {
@@ -32,6 +43,7 @@
     "fb:setup-github-repository": "fabrique setup-github-repository"
   },
   "devDependencies": {
+    "@serialport/binding-mock": "^10.2.2",
     "@types/node": "^26.6.6",
     "@typescript/native": "npm:typescript@^7.0.2",
     "@vitest/coverage-istanbul": "^5.1.0",
@@ -46,5 +58,8 @@
   "fabrique": {
     "version": "2.0.37",
     "type": "lib"
+  },
+  "dependencies": {
+    "serialport": "^13.0.0"
   }
 }
