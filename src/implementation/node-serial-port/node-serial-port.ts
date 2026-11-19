@@ -84,7 +84,8 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
   /**
    * Whether the device behind the port is connected to the system. True from
    * a successful {@linkcode NodeSerialPort.open} until the driver reports a
-   * disconnect.
+   * disconnect; for ports obtained from a {@linkcode NodeSerial} hub, the
+   * hub's polling also drives this flag with the port's presence.
    */
   get connected(): boolean {
     return this.#connected;

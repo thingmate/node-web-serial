@@ -3,7 +3,9 @@ import { SerialPort as SerialPortDriver } from 'serialport';
 import type { SerialPortFilter } from '../../types/serial-port-filter/serial-port-filter.ts';
 import type { SerialPortRequestOptions } from '../../types/serial-port-request-options/serial-port-request-options.ts';
 import type { Serial } from '../../types/serial/serial.ts';
+import { HotplugWatcher } from '../hotplug-watcher/hotplug-watcher.ts';
 import { NodeSerialPort } from '../node-serial-port/node-serial-port.ts';
+import { notifyPresence } from '../port-presence/port-presence.private.ts';
 import { specError } from '../spec-errors/spec-errors.private.ts';
 import { throwUnsupportedHandler } from '../throw-unsupported-handler/throw-unsupported-handler.private.ts';
 
@@ -15,6 +17,13 @@ import { throwUnsupportedHandler } from '../throw-unsupported-handler/throw-unsu
  *
  * Ports are persistent: the same physical path always yields the same
  * `NodeSerialPort` instance, the way the specification's port set behaves.
+ *
+ * Because Node has no operating system device watching, the hub emulates the
+ * specification's `connect` and `disconnect` events by polling `list()` on an
+ * interval — `pollingInterval` milliseconds by default (`500`); a value of
+ * `0` or less disables the polling. The timer is `unref()`d, so it never
+ * keeps the process alive. Events are delivered to `addEventListener`
+ * listeners; the `on*` handler properties are not supported.
  */
 export class NodeSerial extends EventTarget implements Serial {
   readonly #binding: BindingInterface;
@@ -44,9 +53,27 @@ export class NodeSerial extends EventTarget implements Serial {
     throwUnsupportedHandler('ondisconnect', 'never-fires');
   }
 
-  constructor({ binding }: { binding?: BindingInterface } = {}) {
+  constructor({
+    binding,
+    pollingInterval,
+  }: { binding?: BindingInterface; pollingInterval?: number } = {}) {
     super();
     this.#binding = binding ?? SerialPortDriver.binding;
+    const interval: number = pollingInterval ?? 500;
+    if (interval > 0) {
+      // The watcher holds itself alive through its unref()d timer; there is no
+      // stop API — a hub watches for its whole lifetime (design ruling).
+      new HotplugWatcher({
+        binding: this.#binding,
+        interval,
+        onAdded: (info: PortInfo): void => {
+          this.#portAppeared(info);
+        },
+        onRemoved: (path: string): void => {
+          this.#portDisappeared(path);
+        },
+      });
+    }
   }
 
   /**
@@ -112,9 +139,25 @@ export class NodeSerial extends EventTarget implements Serial {
         usbVendorId: parseHex(info.vendorId),
         usbProductId: parseHex(info.productId),
       },
+      binding: this.#binding,
     });
     this.#ports.set(info.path, port);
+    // A port the hub can see is a connected port. The connect dispatch here
+    // provably has no listeners: the object has not been returned to anyone.
+    port[notifyPresence](true);
     return port;
+  }
+
+  /** Hub-side appearance: connect the port, then fire the hub event. */
+  #portAppeared(info: PortInfo): void {
+    this.#portFor(info)[notifyPresence](true);
+    this.dispatchEvent(new Event('connect', { bubbles: true }));
+  }
+
+  /** Hub-side disappearance: disconnect the port, then fire the hub event. */
+  #portDisappeared(path: string): void {
+    this.#ports.get(path)?.[notifyPresence](false);
+    this.dispatchEvent(new Event('disconnect', { bubbles: true }));
   }
 
   /** Filter matching per the specification: every present member must equal the port identity. */
