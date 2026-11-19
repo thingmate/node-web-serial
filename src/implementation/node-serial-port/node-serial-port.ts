@@ -1,9 +1,10 @@
-import { SerialPort } from 'serialport';
+import { SerialPort as SerialPortDriver } from 'serialport';
 import type { BindingInterface, BindingPortInterface } from '@serialport/bindings-cpp';
 import { specError } from '../spec-errors/spec-errors.private.ts';
 import type { SerialInputSignals } from '../../types/serial-input-signals/serial-input-signals.ts';
 import type { SerialOptions } from '../../types/serial-options/serial-options.ts';
 import type { SerialOutputSignals } from '../../types/serial-output-signals/serial-output-signals.ts';
+import type { SerialPort } from '../../types/serial-port/serial-port.ts';
 import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-info.ts';
 
 /**
@@ -13,7 +14,7 @@ import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-in
  * semantics (state machine, stream lifecycle, errors) are implemented per the
  * WHATWG specification.
  */
-export class NodeSerialPort extends EventTarget {
+export class NodeSerialPort extends EventTarget implements SerialPort {
   readonly #path: string;
   readonly #info: SerialPortInfo;
   readonly #binding: BindingInterface;
@@ -30,10 +31,10 @@ export class NodeSerialPort extends EventTarget {
   #signals = { dtr: true, rts: true, brk: false };
 
   /** Handles the port being connected to the system. Never fired in Node: there is no hotplug detection. */
-  onconnect: ((this: NodeSerialPort, event: Event) => any) | null = null;
+  onconnect: ((this: SerialPort, event: Event) => any) | null = null;
 
   /** Handles the port being disconnected from the system, fired when the driver reports a disconnect. */
-  ondisconnect: ((this: NodeSerialPort, event: Event) => any) | null = null;
+  ondisconnect: ((this: SerialPort, event: Event) => any) | null = null;
 
   constructor({
     path,
@@ -47,7 +48,7 @@ export class NodeSerialPort extends EventTarget {
     super();
     this.#path = path;
     this.#info = info ?? {};
-    this.#binding = binding ?? SerialPort.binding;
+    this.#binding = binding ?? SerialPortDriver.binding;
   }
 
   /**
@@ -173,8 +174,8 @@ export class NodeSerialPort extends EventTarget {
   ): Promise<void> {
     const view: ArrayBufferView | null = controller.byobRequest?.view ?? null;
     if (view === null) {
-      controller.error(specError('UnknownError', 'The readable stream has no buffer to read into.'));
-      this.#readable = null;
+      // The spec guarantees a BYOB view here, but Node also invokes pull without
+      // one while cancelling a locked stream: treat it as nothing to do.
       return;
     }
     try {
@@ -396,5 +397,47 @@ export class NodeSerialPort extends EventTarget {
       ringIndicator: false,
       dataSetReady: status.dsr,
     };
+  }
+
+  /**
+   * Closes the port, mirroring the `SerialPort.close` steps: an
+   * `InvalidStateError` DOMException when the port is not open; otherwise the
+   * readable stream is cancelled and the writable stream aborted — which
+   * rejects with the streams' `TypeError` while a reader or writer holds a
+   * lock, leaving the port open — and once both streams are released the
+   * driver port is closed and the state returns to `closed`, making the
+   * instance openable again.
+   */
+  async close(): Promise<void> {
+    if (this.#state !== 'opened') {
+      throw specError('InvalidStateError', 'The serial port is not open.');
+    }
+    let cancelPromise: Promise<void> | undefined;
+    let abortPromise: Promise<void> | undefined;
+    try {
+      cancelPromise = this.#readable?.cancel();
+      abortPromise = this.#writable?.abort();
+    } catch (error) {
+      // cancel()/abort() throw synchronously while a reader or writer holds the lock: the port stays open.
+      throw error;
+    }
+    const port: BindingPortInterface = this.#port!;
+    this.#state = 'closing';
+    try {
+      await Promise.all([cancelPromise, abortPromise]);
+      await port.close();
+    } catch (error) {
+      // The spec's step order leaves the state at "closing" on rejection, which
+      // wedges the port: a locked close (or a driver failure) never happened
+      // operationally, so the port stays open and usable.
+      this.#state = 'opened';
+      throw error;
+    }
+    this.#state = 'closed';
+    this.#readFatal = false;
+    this.#writeFatal = false;
+    this.#readable = null;
+    this.#writable = null;
+    this.#port = undefined;
   }
 }

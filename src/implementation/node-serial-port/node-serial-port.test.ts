@@ -217,6 +217,71 @@ describe('NodeSerialPort.open', () => {
   });
 });
 
+describe('NodeSerialPort.close', () => {
+  beforeEach(() => {
+    SerialPortMock.binding.reset();
+  });
+
+  it('rejects close() before open with an InvalidStateError DOMException', async () => {
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: new GRecordingBinding() });
+    await expect(port.close()).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'InvalidStateError',
+    );
+  });
+
+  it('closes an idle opened port', async () => {
+    const mock: GMockPortCapture = new GMockPortCapture();
+    mock.createPort('/dev/tty.mock');
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: mock });
+    await port.open({ baudRate: 9600 });
+    await expect(port.close()).resolves.toBeUndefined();
+    expect(port.readable).toBeNull();
+    expect(port.writable).toBeNull();
+  });
+
+  it('rejects close() while a reader holds the lock, leaving the port open', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding();
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
+    await expect(port.close()).rejects.toThrow(TypeError);
+    expect(port.readable).not.toBeNull();
+    await expect(port.getSignals()).resolves.toEqual({
+      dataCarrierDetect: false,
+      clearToSend: false,
+      ringIndicator: false,
+      dataSetReady: false,
+    });
+    reader.releaseLock();
+  });
+
+  it('resolves close() after the reader is released', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding();
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
+    reader.releaseLock();
+    await expect(port.close()).resolves.toBeUndefined();
+  });
+
+  it('reopens the same instance after close with fresh streams', async () => {
+    const mock: GMockPortCapture = new GMockPortCapture();
+    mock.createPort('/dev/tty.mock');
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: mock });
+    await port.open({ baudRate: 9600 });
+    const firstReadable: ReadableStream<Uint8Array> | null = port.readable;
+    await port.close();
+    await port.open({ baudRate: 9600 });
+    const secondReadable: ReadableStream<Uint8Array> | null = port.readable;
+    expect(secondReadable).not.toBeNull();
+    expect(secondReadable).not.toBe(firstReadable);
+    const reader: ReadableStreamDefaultReader<Uint8Array> = secondReadable!.getReader();
+    mock.emitData(Buffer.from('again'));
+    const result: ReadableStreamReadResult<Uint8Array> = await reader.read();
+    expect(Array.from(result.value ?? [])).toEqual([97, 103, 97, 105, 110]);
+  });
+});
+
 /** Captures the mock port opened through `serialport`'s mock binding so tests can feed it data. */
 class GMockPortCapture implements BindingInterface {
   #opened: { emitData(data: Buffer | string): void; lastWrite: Buffer | null } | undefined;
