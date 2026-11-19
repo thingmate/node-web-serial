@@ -19,11 +19,37 @@ export class NodeSerial extends EventTarget implements Serial {
   readonly #binding: BindingInterface;
   readonly #ports = new Map<string, NodeSerialPort>();
 
-  /** Handles a port being connected to the system. Never fired in Node: there is no hotplug detection. */
-  onconnect: ((this: Serial, event: Event) => any) | null = null;
+  /**
+   * Not usable in Node: hub `connect`/`disconnect` events never fire because
+   * Node has no hotplug detection. Reading or assigning throws a `TypeError`.
+   */
+  get onconnect(): ((this: Serial, event: Event) => any) | null {
+    throw new TypeError(
+      '"onconnect" is not supported in Node: the "connect" event never fires without hotplug detection.',
+    );
+  }
 
-  /** Handles a port being disconnected from the system. Never fired in Node: there is no hotplug detection. */
-  ondisconnect: ((this: Serial, event: Event) => any) | null = null;
+  set onconnect(_handler: ((this: Serial, event: Event) => any) | null) {
+    throw new TypeError(
+      '"onconnect" is not supported in Node: the "connect" event never fires without hotplug detection.',
+    );
+  }
+
+  /**
+   * Not usable in Node: hub `connect`/`disconnect` events never fire because
+   * Node has no hotplug detection. Reading or assigning throws a `TypeError`.
+   */
+  get ondisconnect(): ((this: Serial, event: Event) => any) | null {
+    throw new TypeError(
+      '"ondisconnect" is not supported in Node: the "disconnect" event never fires without hotplug detection.',
+    );
+  }
+
+  set ondisconnect(_handler: ((this: Serial, event: Event) => any) | null) {
+    throw new TypeError(
+      '"ondisconnect" is not supported in Node: the "disconnect" event never fires without hotplug detection.',
+    );
+  }
 
   constructor({ binding }: { binding?: BindingInterface } = {}) {
     super();

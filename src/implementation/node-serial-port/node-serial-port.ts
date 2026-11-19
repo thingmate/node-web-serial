@@ -30,11 +30,39 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
   #writeController: WritableStreamDefaultController | undefined;
   #signals = { dtr: true, rts: true, brk: false };
 
-  /** Handles the port being connected to the system. Never fired in Node: there is no hotplug detection. */
-  onconnect: ((this: SerialPort, event: Event) => any) | null = null;
+  /**
+   * Not usable in Node: the `connect` event never fires because Node has no
+   * hotplug detection. Reading or assigning throws a `TypeError` — listen for
+   * real events with `addEventListener` instead.
+   */
+  get onconnect(): ((this: SerialPort, event: Event) => any) | null {
+    throw new TypeError(
+      '"onconnect" is not supported in Node: the "connect" event never fires without hotplug detection.',
+    );
+  }
 
-  /** Handles the port being disconnected from the system, fired when the driver reports a disconnect. */
-  ondisconnect: ((this: SerialPort, event: Event) => any) | null = null;
+  set onconnect(_handler: ((this: SerialPort, event: Event) => any) | null) {
+    throw new TypeError(
+      '"onconnect" is not supported in Node: the "connect" event never fires without hotplug detection.',
+    );
+  }
+
+  /**
+   * Not usable as a property in Node: the `disconnect` event is delivered to
+   * `addEventListener("disconnect", …)` listeners only. Reading or assigning
+   * throws a `TypeError`.
+   */
+  get ondisconnect(): ((this: SerialPort, event: Event) => any) | null {
+    throw new TypeError(
+      '"ondisconnect" is not supported as a property in Node: listen with addEventListener("disconnect", …).',
+    );
+  }
+
+  set ondisconnect(_handler: ((this: SerialPort, event: Event) => any) | null) {
+    throw new TypeError(
+      '"ondisconnect" is not supported as a property in Node: listen with addEventListener("disconnect", …).',
+    );
+  }
 
   constructor({
     path,
@@ -321,17 +349,8 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     if (writable !== null) {
       this.#writeController?.error(networkError);
     }
-    this.#fireEvent('disconnect');
+    this.dispatchEvent(new Event('disconnect', { bubbles: true }));
     return networkError;
-  }
-
-  /** Fires a connect or disconnect event to the property handler, then to the event listeners. */
-  #fireEvent(type: 'connect' | 'disconnect'): void {
-    const event: Event = new Event(type, { bubbles: true });
-    const handler: ((this: NodeSerialPort, event: Event) => any) | null =
-      type === 'connect' ? this.onconnect : this.ondisconnect;
-    handler?.call(this, event);
-    this.dispatchEvent(event);
   }
 
   /**

@@ -7,6 +7,18 @@ describe('NodeSerial', () => {
     SerialPortMock.binding.reset();
   });
 
+  it('throws when the on* handler surfaces are touched', () => {
+    const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
+    expect(() => serial.onconnect).toThrow(TypeError);
+    expect(() => {
+      serial.onconnect = null;
+    }).toThrow(TypeError);
+    expect(() => serial.ondisconnect).toThrow(TypeError);
+    expect(() => {
+      serial.ondisconnect = null;
+    }).toThrow(TypeError);
+  });
+
   it('lists every port with parsed USB identifiers', async () => {
     SerialPortMock.binding.createPort('/dev/a', { vendorId: '10c4', productId: 'ea60' });
     SerialPortMock.binding.createPort('/dev/b');

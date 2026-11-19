@@ -183,6 +183,22 @@ describe('NodeSerialPort', () => {
     expect(port.getInfo()).toEqual({ usbVendorId: 0x10c4 });
   });
 
+  it('throws when the onconnect handler surface is touched', () => {
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/ttyUSB0' });
+    expect(() => port.onconnect).toThrow(TypeError);
+    expect(() => {
+      port.onconnect = null;
+    }).toThrow(TypeError);
+  });
+
+  it('throws when the ondisconnect handler surface is touched', () => {
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/ttyUSB0' });
+    expect(() => port.ondisconnect).toThrow(TypeError);
+    expect(() => {
+      port.ondisconnect = null;
+    }).toThrow(TypeError);
+  });
+
   it('is not connected before being opened', () => {
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/ttyUSB0' });
     expect(port.connected).toBe(false);
@@ -605,15 +621,15 @@ describe('NodeSerialPort.writable', () => {
     const binding: GRecordingBinding = new GRecordingBinding({ disconnectedWrite: true });
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
-    let handlerCalls: number = 0;
-    port.ondisconnect = (): void => {
-      handlerCalls += 1;
-    };
+    let listenerCalls: number = 0;
+    port.addEventListener('disconnect', (): void => {
+      listenerCalls += 1;
+    });
     const writer: WritableStreamDefaultWriter<Uint8Array> = port.writable!.getWriter();
     await expect(writer.write(new Uint8Array([1]))).rejects.toSatisfy(
       (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
     );
-    expect(handlerCalls).toBe(1);
+    expect(listenerCalls).toBe(1);
     expect(port.connected).toBe(false);
     expect(port.writable).toBeNull();
     expect(port.readable).toBeNull();
@@ -644,20 +660,20 @@ describe('NodeSerialPort.disconnect', () => {
     const binding: GRecordingBinding = new GRecordingBinding({ disconnectedRead: true });
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
-    let handlerCalls: number = 0;
-    let listenerCalls: number = 0;
-    port.ondisconnect = (): void => {
-      handlerCalls += 1;
-    };
+    let firstListenerCalls: number = 0;
+    let secondListenerCalls: number = 0;
     port.addEventListener('disconnect', (): void => {
-      listenerCalls += 1;
+      firstListenerCalls += 1;
+    });
+    port.addEventListener('disconnect', (): void => {
+      secondListenerCalls += 1;
     });
     const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
     await expect(reader.read()).rejects.toSatisfy(
       (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
     );
-    expect(handlerCalls).toBe(1);
-    expect(listenerCalls).toBe(1);
+    expect(firstListenerCalls).toBe(1);
+    expect(secondListenerCalls).toBe(1);
     expect(port.connected).toBe(false);
   });
 
@@ -671,16 +687,16 @@ describe('NodeSerialPort.disconnect', () => {
     expect(port.writable).toBeNull();
   });
 
-  it('invokes the ondisconnect property handler with a bubbling Event whose type is disconnect', async () => {
+  it('delivers a bubbling disconnect event to listeners', async () => {
     const binding: GRecordingBinding = new GRecordingBinding({ disconnectedRead: true });
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
     let eventType: string | undefined;
     let eventBubbles: boolean | undefined;
-    port.ondisconnect = (event: Event): void => {
+    port.addEventListener('disconnect', (event: Event): void => {
       eventType = event.type;
       eventBubbles = event.bubbles;
-    };
+    });
     const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
     await expect(reader.read()).rejects.toThrow();
     expect(eventType).toBe('disconnect');
@@ -750,14 +766,14 @@ describe('NodeSerialPort.signals', () => {
     const binding: GRecordingBinding = new GRecordingBinding({ disconnectedSet: true });
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
-    let handlerCalls: number = 0;
-    port.ondisconnect = (): void => {
-      handlerCalls += 1;
-    };
+    let listenerCalls: number = 0;
+    port.addEventListener('disconnect', (): void => {
+      listenerCalls += 1;
+    });
     await expect(port.setSignals({ requestToSend: true })).rejects.toSatisfy(
       (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
     );
-    expect(handlerCalls).toBe(1);
+    expect(listenerCalls).toBe(1);
     expect(port.connected).toBe(false);
   });
 
