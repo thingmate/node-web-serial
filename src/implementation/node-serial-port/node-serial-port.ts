@@ -11,7 +11,7 @@ import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-in
  * semantics (state machine, stream lifecycle, errors) are implemented per the
  * WHATWG specification.
  */
-export class NodeSerialPort {
+export class NodeSerialPort extends EventTarget {
   readonly #path: string;
   readonly #info: SerialPortInfo;
   readonly #binding: BindingInterface;
@@ -21,8 +21,16 @@ export class NodeSerialPort {
   #bufferSize = 255;
   #readable: ReadableStream<Uint8Array> | null = null;
   #readFatal = false;
+  #readController: ReadableByteStreamController | undefined;
   #writable: WritableStream<Uint8Array> | null = null;
   #writeFatal = false;
+  #writeController: WritableStreamDefaultController | undefined;
+
+  /** Handles the port being connected to the system. Never fired in Node: there is no hotplug detection. */
+  onconnect: ((this: NodeSerialPort, event: Event) => any) | null = null;
+
+  /** Handles the port being disconnected from the system, fired when the driver reports a disconnect. */
+  ondisconnect: ((this: NodeSerialPort, event: Event) => any) | null = null;
 
   constructor({
     path,
@@ -33,6 +41,7 @@ export class NodeSerialPort {
     info?: SerialPortInfo;
     binding?: BindingInterface;
   }) {
+    super();
     this.#path = path;
     this.#info = info ?? {};
     this.#binding = binding ?? SerialPort.binding;
@@ -140,6 +149,9 @@ export class NodeSerialPort {
       {
         type: 'bytes',
         autoAllocateChunkSize: this.#bufferSize,
+        start: (controller) => {
+          this.#readController = controller;
+        },
         pull: (controller) => this.#pullRead(port, controller),
         cancel: (): void => {
           this.#readable = null;
@@ -172,6 +184,13 @@ export class NodeSerialPort {
       }
       controller.byobRequest?.respond(bytesRead);
     } catch (error) {
+      if (this.#isCanceled(error)) {
+        return;
+      }
+      if (this.#isDisconnect(error)) {
+        this.#disconnect(error instanceof Error ? error.message : String(error));
+        return;
+      }
       if (this.#state !== 'opened') {
         return;
       }
@@ -208,6 +227,9 @@ export class NodeSerialPort {
     const port: BindingPortInterface = this.#port!;
     this.#writable = new WritableStream<Uint8Array>(
       {
+        start: (controller) => {
+          this.#writeController = controller;
+        },
         write: async (chunk: Uint8Array): Promise<void> => {
           await this.#writeChunk(port, chunk);
         },
@@ -233,11 +255,62 @@ export class NodeSerialPort {
     try {
       await port.write(buffer);
     } catch (error) {
+      if (this.#isCanceled(error)) {
+        return;
+      }
+      if (this.#isDisconnect(error)) {
+        this.#disconnect(error instanceof Error ? error.message : String(error));
+        return;
+      }
       this.#writable = null;
       throw specError(
         'UnknownError',
         `Failed to write to the serial port: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  /** Whether a driver error reports a device disconnect (bindings mark raw failures with the flag). */
+  #isDisconnect(error: unknown): boolean {
+    return error instanceof Error && (error as { disconnected?: boolean }).disconnected === true;
+  }
+
+  /** Whether a driver error reports an orderly cancellation, as raised when closing in-flight operations. */
+  #isCanceled(error: unknown): boolean {
+    return error instanceof Error && (error as { canceled?: boolean }).canceled === true;
+  }
+
+  /**
+   * Shared disconnect algorithm: both streams become fatally broken, the port
+   * reports itself as disconnected, and a single `disconnect` event is fired.
+   */
+  #disconnect(reason: string): void {
+    if (this.#readFatal) {
+      return;
+    }
+    const networkError: DOMException = specError('NetworkError', reason);
+    const readable: ReadableStream<Uint8Array> | null = this.#readable;
+    const writable: WritableStream<Uint8Array> | null = this.#writable;
+    this.#readFatal = true;
+    this.#writeFatal = true;
+    this.#connected = false;
+    this.#readable = null;
+    this.#writable = null;
+    if (readable !== null) {
+      this.#readController?.error(networkError);
+    }
+    if (writable !== null) {
+      this.#writeController?.error(networkError);
+    }
+    this.#fireEvent('disconnect');
+  }
+
+  /** Fires a connect or disconnect event to the property handler, then to the event listeners. */
+  #fireEvent(type: 'connect' | 'disconnect'): void {
+    const event: Event = new Event(type);
+    const handler: ((this: NodeSerialPort, event: Event) => any) | null =
+      type === 'connect' ? this.onconnect : this.ondisconnect;
+    handler?.call(this, event);
+    this.dispatchEvent(event);
   }
 }

@@ -22,22 +22,26 @@ class GRecordingBinding implements BindingInterface {
   #failingRead: boolean;
   #failingWrite: boolean;
   #blockWrite: boolean;
+  #disconnectedRead: boolean;
 
   constructor({
     data,
     failingRead,
     failingWrite,
     blockWrite,
+    disconnectedRead,
   }: {
     data?: Buffer;
     failingRead?: boolean;
     failingWrite?: boolean;
     blockWrite?: boolean;
+    disconnectedRead?: boolean;
   } = {}) {
     this.#data = data ?? Buffer.alloc(0);
     this.#failingRead = failingRead ?? false;
     this.#failingWrite = failingWrite ?? false;
     this.#blockWrite = blockWrite ?? false;
+    this.#disconnectedRead = disconnectedRead ?? false;
   }
 
   setFailingRead(failing: boolean): void {
@@ -46,6 +50,10 @@ class GRecordingBinding implements BindingInterface {
 
   setFailingWrite(failing: boolean): void {
     this.#failingWrite = failing;
+  }
+
+  setDisconnectedRead(disconnected: boolean): void {
+    this.#disconnectedRead = disconnected;
   }
 
   list(): Promise<PortInfo[]> {
@@ -59,6 +67,11 @@ class GRecordingBinding implements BindingInterface {
       close: async () => {},
       read: async (buffer: Buffer, offset: number, length: number) => {
         this.reads.push({ offset, length });
+        if (this.#disconnectedRead) {
+          const error: Error = new Error('device detached');
+          (error as { disconnected?: boolean }).disconnected = true;
+          throw error;
+        }
         if (this.#failingRead) {
           throw new Error('driver read failure');
         }
@@ -391,5 +404,49 @@ describe('NodeSerialPort.writable', () => {
     await expect(inFlight).rejects.toThrow();
     await new Promise<void>((resolve: () => void) => { setImmediate(resolve); });
     expect(binding.flushed).toBe(false);
+  });
+});
+
+describe('NodeSerialPort.disconnect', () => {
+  beforeEach(() => {
+    SerialPortMock.binding.reset();
+  });
+
+  it('flips connected to false and fires disconnect exactly once when the driver disconnects', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ disconnectedRead: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    let handlerCalls: number = 0;
+    let listenerCalls: number = 0;
+    port.ondisconnect = (): void => { handlerCalls += 1; };
+    port.addEventListener('disconnect', (): void => { listenerCalls += 1; });
+    const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
+    await expect(reader.read()).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
+    );
+    expect(handlerCalls).toBe(1);
+    expect(listenerCalls).toBe(1);
+    expect(port.connected).toBe(false);
+  });
+
+  it('nulls both readable and writable after a disconnect', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ disconnectedRead: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
+    await expect(reader.read()).rejects.toThrow();
+    expect(port.readable).toBeNull();
+    expect(port.writable).toBeNull();
+  });
+
+  it('invokes the ondisconnect property handler with an Event whose type is disconnect', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ disconnectedRead: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    let eventType: string | undefined;
+    port.ondisconnect = (event: Event): void => { eventType = event.type; };
+    const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
+    await expect(reader.read()).rejects.toThrow();
+    expect(eventType).toBe('disconnect');
   });
 });
