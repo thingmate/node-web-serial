@@ -38,6 +38,16 @@ describe('NodeSerial', () => {
     );
   });
 
+  it('does not match a port whose usbProductId differs from the filter', async () => {
+    SerialPortMock.binding.createPort('/dev/a', { vendorId: '10c4', productId: 'ea60' });
+    const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
+    await expect(
+      serial.requestPort({ filters: [{ usbVendorId: 0x10c4, usbProductId: 0x0001 }] }),
+    ).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'NotFoundError',
+    );
+  });
+
   it('rejects a bluetoothServiceClassId-only filter with a TypeError, like the spec', async () => {
     SerialPortMock.binding.createPort('/dev/a', { vendorId: '10c4' });
     const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
