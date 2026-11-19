@@ -9,6 +9,7 @@ import { HotplugWatcher } from './hotplug-watcher.ts';
  * ports on every scan.
  */
 class GListBinding implements BindingInterface {
+  listCalls = 0;
   #queued: Array<PortInfo[] | Error> = [];
   #repeated: PortInfo[] = [];
   hangList = false;
@@ -26,6 +27,7 @@ class GListBinding implements BindingInterface {
   }
 
   async list(): Promise<PortInfo[]> {
+    this.listCalls += 1;
     const answer: PortInfo[] | Error | undefined = this.#queued.shift();
     if (answer instanceof Error) {
       throw answer;
@@ -136,6 +138,8 @@ describe('HotplugWatcher', () => {
     binding.queue([]);
     await vi.advanceTimersByTimeAsync(500);
     expect(removed).toEqual(['/dev/b']);
+    // baseline + the one hung tick + the resumed one — the two skipped ticks never called list().
+    expect(binding.listCalls).toBe(3);
   });
 
   it('keeps polling when list() rejects', async () => {

@@ -1,4 +1,6 @@
 import { SerialPortMock } from 'serialport';
+import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NodeSerialPort } from '../node-serial-port/node-serial-port.ts';
 import { NodeSerial } from './node-serial.ts';
@@ -278,5 +280,22 @@ describe('NodeSerial.hotplug', () => {
     await port.open({ baudRate: 9600 });
     await port.close();
     expect(port.connected).toBe(true);
+  });
+});
+
+describe('NodeSerial.process', () => {
+  it('never keeps the process alive while watching by default', () => {
+    // A ref'd interval would keep the child process running past its work and
+    // force the test's timeout kill: the watcher timer must be unref()d.
+    const entry: string = pathToFileURL('src/implementation/node-serial/node-serial.ts').href;
+    execFileSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '--eval',
+        `import('${entry}').then(({ NodeSerial }) => { new NodeSerial(); });`,
+      ],
+      { timeout: 5000, cwd: process.cwd() },
+    );
   });
 });
