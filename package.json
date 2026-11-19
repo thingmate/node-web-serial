@@ -2,8 +2,19 @@
   "name": "@thingmate/node-web-serial",
   "version": "0.0.1",
   "type": "module",
-  "description": "WebSerial API for Nodejs",
-  "keywords": [],
+  "description": "Web Serial API for Node.js: spec-faithful Serial and SerialPort on top of serialport bindings",
+  "keywords": [
+    "web-serial",
+    "web-serial-api",
+    "serial",
+    "serial-port",
+    "serialport",
+    "nodejs",
+    "typescript",
+    "streams",
+    "hotplug",
+    "eventtarget"
+  ],
   "author": "Valentin Richard",
   "license": "MIT",
   "repository": {
