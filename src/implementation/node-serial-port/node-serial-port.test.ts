@@ -16,6 +16,7 @@ import { NodeSerialPort } from './node-serial-port.ts';
 class GRecordingBinding implements BindingInterface {
   readonly reads: Array<{ offset: number; length: number }> = [];
   readonly writes: Buffer[] = [];
+  readonly sets: Array<{ brk?: boolean; dtr?: boolean; rts?: boolean }> = [];
   drained = false;
   flushed = false;
   #data: Buffer;
@@ -23,6 +24,8 @@ class GRecordingBinding implements BindingInterface {
   #failingWrite: boolean;
   #blockWrite: boolean;
   #disconnectedRead: boolean;
+  #failingGet: boolean;
+  #status: { cts: boolean; dsr: boolean; dcd: boolean };
 
   constructor({
     data,
@@ -30,18 +33,24 @@ class GRecordingBinding implements BindingInterface {
     failingWrite,
     blockWrite,
     disconnectedRead,
+    failingGet,
+    status,
   }: {
     data?: Buffer;
     failingRead?: boolean;
     failingWrite?: boolean;
     blockWrite?: boolean;
     disconnectedRead?: boolean;
+    failingGet?: boolean;
+    status?: { cts: boolean; dsr: boolean; dcd: boolean };
   } = {}) {
     this.#data = data ?? Buffer.alloc(0);
     this.#failingRead = failingRead ?? false;
     this.#failingWrite = failingWrite ?? false;
     this.#blockWrite = blockWrite ?? false;
     this.#disconnectedRead = disconnectedRead ?? false;
+    this.#failingGet = failingGet ?? false;
+    this.#status = status ?? { cts: false, dsr: false, dcd: false };
   }
 
   setFailingRead(failing: boolean): void {
@@ -90,8 +99,15 @@ class GRecordingBinding implements BindingInterface {
         this.writes.push(Buffer.from(buffer));
       },
       update: async () => {},
-      set: async () => {},
-      get: async () => ({ cts: false, dsr: false, dcd: false }),
+      set: async (options: { brk?: boolean; dtr?: boolean; rts?: boolean }) => {
+        this.sets.push({ ...options });
+      },
+      get: async () => {
+        if (this.#failingGet) {
+          throw new Error('driver status failure');
+        }
+        return { ...this.#status };
+      },
       getBaudRate: async () => ({ baudRate: 9600 }),
       flush: async () => {
         this.flushed = true;
@@ -448,5 +464,68 @@ describe('NodeSerialPort.disconnect', () => {
     const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
     await expect(reader.read()).rejects.toThrow();
     expect(eventType).toBe('disconnect');
+  });
+});
+
+describe('NodeSerialPort.signals', () => {
+  beforeEach(() => {
+    SerialPortMock.binding.reset();
+  });
+
+  it('rejects setSignals before open with an InvalidStateError DOMException', async () => {
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: new GRecordingBinding() });
+    await expect(port.setSignals({ dataTerminalReady: true })).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'InvalidStateError',
+    );
+  });
+
+  it('rejects getSignals before open with an InvalidStateError DOMException', async () => {
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: new GRecordingBinding() });
+    await expect(port.getSignals()).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'InvalidStateError',
+    );
+  });
+
+  it('rejects an empty setSignals() with a TypeError', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding();
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    await expect(port.setSignals({})).rejects.toThrow(TypeError);
+    await expect(port.setSignals()).rejects.toThrow(TypeError);
+    expect(binding.sets).toEqual([]);
+  });
+
+  it('sends the complete tracked signal state in one set() call, starting from the open-time default', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding();
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    await port.setSignals({ requestToSend: true });
+    expect(binding.sets).toEqual([{ dtr: true, rts: true, brk: false }]);
+    await port.setSignals({ dataTerminalReady: false });
+    expect(binding.sets).toEqual([
+      { dtr: true, rts: true, brk: false },
+      { dtr: false, rts: true, brk: false },
+    ]);
+  });
+
+  it('maps modem status to input signals with ringIndicator always false', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ status: { cts: true, dsr: false, dcd: true } });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    await expect(port.getSignals()).resolves.toEqual({
+      clearToSend: true,
+      dataSetReady: false,
+      dataCarrierDetect: true,
+      ringIndicator: false,
+    });
+  });
+
+  it('rejects getSignals with a NetworkError DOMException when the driver fails', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ failingGet: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    await expect(port.getSignals()).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
+    );
   });
 });

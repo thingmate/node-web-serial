@@ -1,7 +1,9 @@
 import { SerialPort } from 'serialport';
 import type { BindingInterface, BindingPortInterface } from '@serialport/bindings-cpp';
 import { specError } from '../spec-errors/spec-errors.private.ts';
+import type { SerialInputSignals } from '../../types/serial-input-signals/serial-input-signals.ts';
 import type { SerialOptions } from '../../types/serial-options/serial-options.ts';
+import type { SerialOutputSignals } from '../../types/serial-output-signals/serial-output-signals.ts';
 import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-info.ts';
 
 /**
@@ -25,6 +27,7 @@ export class NodeSerialPort extends EventTarget {
   #writable: WritableStream<Uint8Array> | null = null;
   #writeFatal = false;
   #writeController: WritableStreamDefaultController | undefined;
+  #signals = { dtr: true, rts: true, brk: false };
 
   /** Handles the port being connected to the system. Never fired in Node: there is no hotplug detection. */
   onconnect: ((this: NodeSerialPort, event: Event) => any) | null = null;
@@ -125,6 +128,7 @@ export class NodeSerialPort extends EventTarget {
     this.#state = 'opened';
     this.#connected = true;
     this.#bufferSize = options.bufferSize ?? 255;
+    this.#signals = { dtr: true, rts: true, brk: false };
   }
 
   /**
@@ -312,5 +316,85 @@ export class NodeSerialPort extends EventTarget {
       type === 'connect' ? this.onconnect : this.ondisconnect;
     handler?.call(this, event);
     this.dispatchEvent(event);
+  }
+
+  /**
+   * Sets modem control signals, mirroring the `SerialPort.setSignals` steps:
+   * an `InvalidStateError` DOMException when the port is not open, a
+   * `TypeError` when no signal is specified.
+   *
+   * The driver asserts or deasserts every flag on each call, so each call
+   * sends the complete tracked state — untouched signals keep the value they
+   * had at open time (`dtr` and `rts` asserted, `break` deasserted). Successive
+   * calls therefore apply the specification's DTR → RTS → break ordering
+   * across calls.
+   */
+  async setSignals(signals?: SerialOutputSignals): Promise<void> {
+    if (this.#state !== 'opened') {
+      throw specError('InvalidStateError', 'The serial port is not open.');
+    }
+    const touched: SerialOutputSignals = signals ?? {};
+    if (
+      touched.dataTerminalReady === undefined &&
+      touched.requestToSend === undefined &&
+      touched.break === undefined
+    ) {
+      throw new TypeError('"signals" must specify at least one signal.');
+    }
+    if (touched.dataTerminalReady !== undefined) {
+      this.#signals.dtr = touched.dataTerminalReady;
+    }
+    if (touched.requestToSend !== undefined) {
+      this.#signals.rts = touched.requestToSend;
+    }
+    if (touched.break !== undefined) {
+      this.#signals.brk = touched.break;
+    }
+    const port: BindingPortInterface = this.#port!;
+    try {
+      await port.set({ brk: this.#signals.brk, dtr: this.#signals.dtr, rts: this.#signals.rts });
+    } catch (error) {
+      if (this.#isCanceled(error)) {
+        return;
+      }
+      if (this.#isDisconnect(error)) {
+        this.#disconnect(error instanceof Error ? error.message : String(error));
+        return;
+      }
+      throw specError(
+        'UnknownError',
+        `Failed to set the signals of the serial port: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Reads the modem status signals of the port, mirroring the
+   * `SerialPort.getSignals` steps. `ringIndicator` is always `false`: the
+   * driver cannot report that line.
+   */
+  async getSignals(): Promise<SerialInputSignals> {
+    if (this.#state !== 'opened') {
+      throw specError('InvalidStateError', 'The serial port is not open.');
+    }
+    const port: BindingPortInterface = this.#port!;
+    let status: { cts: boolean; dsr: boolean; dcd: boolean };
+    try {
+      status = await port.get();
+    } catch (error) {
+      if (this.#isDisconnect(error)) {
+        this.#disconnect(error instanceof Error ? error.message : String(error));
+      }
+      throw specError(
+        'NetworkError',
+        `Failed to read the signals of the serial port: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return {
+      dataCarrierDetect: status.dcd,
+      clearToSend: status.cts,
+      ringIndicator: false,
+      dataSetReady: status.dsr,
+    };
   }
 }
