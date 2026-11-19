@@ -409,6 +409,25 @@ describe('NodeSerial.lazyWatching', () => {
     expect(port.connected).toBe(true);
   });
 
+  it('stops an active watcher once the interval drops to 0', async () => {
+    const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
+    const listSpy = vi.spyOn(SerialPortMock.binding, 'list');
+    const defaultInterval: number = HotplugWatcher.interval;
+    const listener = (): void => {};
+    try {
+      serial.addEventListener('connect', listener);
+      await vi.advanceTimersByTimeAsync(0);
+      const duringCalls: number = listSpy.mock.calls.length;
+      expect(duringCalls).toBeGreaterThan(0);
+      HotplugWatcher.interval = 0;
+      serial.removeEventListener('connect', listener);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(listSpy.mock.calls.length).toBe(duringCalls);
+    } finally {
+      HotplugWatcher.interval = defaultInterval;
+    }
+  });
+
   it('re-subscribing restarts watching with a fresh silent baseline', async () => {
     const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
     const hubEvents: string[] = [];

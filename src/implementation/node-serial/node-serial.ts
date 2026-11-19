@@ -123,18 +123,21 @@ export class NodeSerial extends EventTarget implements Serial {
   /**
    * The single decision point of the watching: run a watcher while at least
    * one hub-level listener exists or one port is open, and stop it when the
-   * last need goes. A restarting period creates a fresh watcher, which
-   * re-baselines silently — events are not retroactive.
+   * last need goes — or when the interval static drops to `0` or less. A
+   * restarting period creates a fresh watcher, which re-baselines silently —
+   * events are not retroactive.
    */
   #updateWatching(): void {
-    if (HotplugWatcher.interval <= 0) {
-      return;
-    }
     const needed: boolean =
       this.#openPorts > 0 ||
       getEventListeners(this, 'connect').length > 0 ||
       getEventListeners(this, 'disconnect').length > 0;
-    if (needed && this.#watcher === undefined) {
+    if (this.#watcher !== undefined) {
+      if (!needed || HotplugWatcher.interval <= 0) {
+        this.#watcher.stop();
+        this.#watcher = undefined;
+      }
+    } else if (needed && HotplugWatcher.interval > 0) {
       this.#watcher = new HotplugWatcher({
         binding: this.#binding,
         interval: HotplugWatcher.interval,
@@ -145,9 +148,6 @@ export class NodeSerial extends EventTarget implements Serial {
           this.#portDisappeared(path);
         },
       });
-    } else if (!needed && this.#watcher !== undefined) {
-      this.#watcher.stop();
-      this.#watcher = undefined;
     }
   }
 
