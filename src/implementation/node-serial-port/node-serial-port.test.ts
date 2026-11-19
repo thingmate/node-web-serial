@@ -6,7 +6,7 @@ import type {
 } from '@serialport/bindings-cpp';
 import { SerialPortMock } from 'serialport';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { notifyPresence } from '../port-presence/port-presence.private.ts';
+import { presenceChannels } from '../port-presence/port-presence.private.ts';
 import { NodeSerialPort } from './node-serial-port.ts';
 
 /**
@@ -818,7 +818,7 @@ describe('NodeSerialPort.presence', () => {
     port.addEventListener('disconnect', (): void => {
       listenerCalls += 1;
     });
-    port[notifyPresence](false);
+    presenceChannels.get(port)!(false);
     expect(port.connected).toBe(false);
     expect(listenerCalls).toBe(1);
   });
@@ -832,7 +832,7 @@ describe('NodeSerialPort.presence', () => {
     port.addEventListener('disconnect', (): void => {
       listenerCalls += 1;
     });
-    port[notifyPresence](false);
+    presenceChannels.get(port)!(false);
     expect(port.connected).toBe(false);
     expect(port.readable).toBeNull();
     expect(port.writable).toBeNull();
@@ -847,8 +847,8 @@ describe('NodeSerialPort.presence', () => {
     port.addEventListener('connect', (): void => {
       connectCalls += 1;
     });
-    port[notifyPresence](false);
-    port[notifyPresence](true);
+    presenceChannels.get(port)!(false);
+    presenceChannels.get(port)!(true);
     expect(connectCalls).toBe(1);
     expect(port.connected).toBe(true);
     const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
@@ -866,7 +866,7 @@ describe('NodeSerialPort.presence', () => {
     });
     const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
     await expect(reader.read()).rejects.toThrow();
-    port[notifyPresence](false);
+    presenceChannels.get(port)!(false);
     expect(listenerCalls).toBe(1);
   });
 
@@ -879,8 +879,8 @@ describe('NodeSerialPort.presence', () => {
     port.addEventListener('disconnect', (): void => {
       listenerCalls += 1;
     });
-    port[notifyPresence](false);
-    port[notifyPresence](false);
+    presenceChannels.get(port)!(false);
+    presenceChannels.get(port)!(false);
     expect(listenerCalls).toBe(1);
   });
 
@@ -892,7 +892,7 @@ describe('NodeSerialPort.presence', () => {
     port.addEventListener('connect', (): void => {
       listenerCalls += 1;
     });
-    port[notifyPresence](true);
+    presenceChannels.get(port)!(true);
     expect(listenerCalls).toBe(0);
   });
 });

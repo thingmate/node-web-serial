@@ -5,7 +5,7 @@ import type { SerialOptions } from '../../types/serial-options/serial-options.ts
 import type { SerialOutputSignals } from '../../types/serial-output-signals/serial-output-signals.ts';
 import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-info.ts';
 import type { SerialPort } from '../../types/serial-port/serial-port.ts';
-import { notifyPresence } from '../port-presence/port-presence.private.ts';
+import { presenceChannels } from '../port-presence/port-presence.private.ts';
 import { specError } from '../spec-errors/spec-errors.private.ts';
 import { throwUnsupportedHandler } from '../throw-unsupported-handler/throw-unsupported-handler.private.ts';
 
@@ -70,6 +70,9 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     this.#path = path;
     this.#info = info ?? {};
     this.#binding = binding ?? SerialPortDriver.binding;
+    presenceChannels.set(this, (present: boolean): void => {
+      this.#receivePresence(present);
+    });
   }
 
   /**
@@ -431,7 +434,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
    * fatal flags so the streams re-create, the way the spec's stream getters
    * consult `[[connected]]`.
    */
-  [notifyPresence](present: boolean): void {
+  #receivePresence(present: boolean): void {
     if (present) {
       if (this.#connected) {
         return;

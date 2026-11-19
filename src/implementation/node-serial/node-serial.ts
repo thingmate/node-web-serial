@@ -5,7 +5,7 @@ import type { SerialPortRequestOptions } from '../../types/serial-port-request-o
 import type { Serial } from '../../types/serial/serial.ts';
 import { HotplugWatcher } from '../hotplug-watcher/hotplug-watcher.ts';
 import { NodeSerialPort } from '../node-serial-port/node-serial-port.ts';
-import { notifyPresence } from '../port-presence/port-presence.private.ts';
+import { presenceChannels } from '../port-presence/port-presence.private.ts';
 import { specError } from '../spec-errors/spec-errors.private.ts';
 import { throwUnsupportedHandler } from '../throw-unsupported-handler/throw-unsupported-handler.private.ts';
 
@@ -144,19 +144,22 @@ export class NodeSerial extends EventTarget implements Serial {
     this.#ports.set(info.path, port);
     // A port the hub can see is a connected port. The connect dispatch here
     // provably has no listeners: the object has not been returned to anyone.
-    port[notifyPresence](true);
+    presenceChannels.get(port)?.(true);
     return port;
   }
 
   /** Hub-side appearance: connect the port, then fire the hub event. */
   #portAppeared(info: PortInfo): void {
-    this.#portFor(info)[notifyPresence](true);
+    presenceChannels.get(this.#portFor(info))?.(true);
     this.dispatchEvent(new Event('connect', { bubbles: true }));
   }
 
   /** Hub-side disappearance: disconnect the port, then fire the hub event. */
   #portDisappeared(path: string): void {
-    this.#ports.get(path)?.[notifyPresence](false);
+    const port: NodeSerialPort | undefined = this.#ports.get(path);
+    if (port !== undefined) {
+      presenceChannels.get(port)?.(false);
+    }
     this.dispatchEvent(new Event('disconnect', { bubbles: true }));
   }
 
