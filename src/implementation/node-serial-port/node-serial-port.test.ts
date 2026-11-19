@@ -24,7 +24,11 @@ class GRecordingBinding implements BindingInterface {
   #failingWrite: boolean;
   #blockWrite: boolean;
   #disconnectedRead: boolean;
+  #disconnectedWrite: boolean;
+  #failingDrain: boolean;
   #failingGet: boolean;
+  #failingSet: boolean;
+  #disconnectedSet: boolean;
   #status: { cts: boolean; dsr: boolean; dcd: boolean };
 
   constructor({
@@ -33,7 +37,11 @@ class GRecordingBinding implements BindingInterface {
     failingWrite,
     blockWrite,
     disconnectedRead,
+    disconnectedWrite,
+    failingDrain,
     failingGet,
+    failingSet,
+    disconnectedSet,
     status,
   }: {
     data?: Buffer;
@@ -41,7 +49,11 @@ class GRecordingBinding implements BindingInterface {
     failingWrite?: boolean;
     blockWrite?: boolean;
     disconnectedRead?: boolean;
+    disconnectedWrite?: boolean;
+    failingDrain?: boolean;
     failingGet?: boolean;
+    failingSet?: boolean;
+    disconnectedSet?: boolean;
     status?: { cts: boolean; dsr: boolean; dcd: boolean };
   } = {}) {
     this.#data = data ?? Buffer.alloc(0);
@@ -49,7 +61,11 @@ class GRecordingBinding implements BindingInterface {
     this.#failingWrite = failingWrite ?? false;
     this.#blockWrite = blockWrite ?? false;
     this.#disconnectedRead = disconnectedRead ?? false;
+    this.#disconnectedWrite = disconnectedWrite ?? false;
+    this.#failingDrain = failingDrain ?? false;
     this.#failingGet = failingGet ?? false;
+    this.#failingSet = failingSet ?? false;
+    this.#disconnectedSet = disconnectedSet ?? false;
     this.#status = status ?? { cts: false, dsr: false, dcd: false };
   }
 
@@ -63,6 +79,10 @@ class GRecordingBinding implements BindingInterface {
 
   setDisconnectedRead(disconnected: boolean): void {
     this.#disconnectedRead = disconnected;
+  }
+
+  setFailingDrain(failing: boolean): void {
+    this.#failingDrain = failing;
   }
 
   list(): Promise<PortInfo[]> {
@@ -93,6 +113,11 @@ class GRecordingBinding implements BindingInterface {
         if (this.#blockWrite) {
           return new Promise<void>(() => {});
         }
+        if (this.#disconnectedWrite) {
+          const error: Error = new Error('device detached');
+          (error as { disconnected?: boolean }).disconnected = true;
+          throw error;
+        }
         if (this.#failingWrite) {
           throw new Error('driver write failure');
         }
@@ -100,6 +125,14 @@ class GRecordingBinding implements BindingInterface {
       },
       update: async () => {},
       set: async (options: { brk?: boolean; dtr?: boolean; rts?: boolean }) => {
+        if (this.#disconnectedSet) {
+          const error: Error = new Error('device detached');
+          (error as { disconnected?: boolean }).disconnected = true;
+          throw error;
+        }
+        if (this.#failingSet) {
+          throw new Error('driver set failure');
+        }
         this.sets.push({ ...options });
       },
       get: async () => {
@@ -113,6 +146,9 @@ class GRecordingBinding implements BindingInterface {
         this.flushed = true;
       },
       drain: async () => {
+        if (this.#failingDrain) {
+          throw new Error('driver drain failure');
+        }
         this.drained = true;
       },
     };
@@ -282,6 +318,22 @@ describe('NodeSerialPort.close', () => {
       dataSetReady: false,
     });
     reader.releaseLock();
+  });
+
+  it('rejects close() while a writer holds the lock, leaving the port open', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding();
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    const writer: WritableStreamDefaultWriter<Uint8Array> = port.writable!.getWriter();
+    await expect(port.close()).rejects.toThrow(TypeError);
+    expect(port.writable).not.toBeNull();
+    await expect(port.getSignals()).resolves.toEqual({
+      dataCarrierDetect: false,
+      clearToSend: false,
+      ringIndicator: false,
+      dataSetReady: false,
+    });
+    writer.releaseLock();
   });
 
   it('resolves close() after the reader is released', async () => {
@@ -520,6 +572,41 @@ describe('NodeSerialPort.writable', () => {
     await writer.write(new Uint8Array([1]));
     await writer.close();
     expect(binding.drained).toBe(true);
+  });
+
+  it('releases the writable and rejects with an UnknownError DOMException when the driver fails to drain', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ failingDrain: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    const first: WritableStream<Uint8Array> | null = port.writable;
+    const writer: WritableStreamDefaultWriter<Uint8Array> = first!.getWriter();
+    await expect(writer.close()).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'UnknownError',
+    );
+    const second: WritableStream<Uint8Array> | null = port.writable;
+    expect(second).not.toBeNull();
+    expect(second).not.toBe(first);
+    binding.setFailingDrain(false);
+    const recovered: WritableStreamDefaultWriter<Uint8Array> = second!.getWriter();
+    await expect(recovered.write(new Uint8Array([1]))).resolves.toBeUndefined();
+  });
+
+  it('fires disconnect when the driver disconnects during a write', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ disconnectedWrite: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    let handlerCalls: number = 0;
+    port.ondisconnect = (): void => {
+      handlerCalls += 1;
+    };
+    const writer: WritableStreamDefaultWriter<Uint8Array> = port.writable!.getWriter();
+    await expect(writer.write(new Uint8Array([1]))).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
+    );
+    expect(handlerCalls).toBe(1);
+    expect(port.connected).toBe(false);
+    expect(port.writable).toBeNull();
+    expect(port.readable).toBeNull();
   });
 
   it('aborts by discarding queued writes without touching the OS buffers', async () => {

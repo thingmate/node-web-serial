@@ -241,7 +241,21 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
           await this.#writeChunk(port, chunk);
         },
         close: async (): Promise<void> => {
-          await port.drain();
+          try {
+            await port.drain();
+          } catch (error) {
+            if (this.#isCanceled(error)) {
+              return;
+            }
+            if (this.#isDisconnect(error)) {
+              throw this.#disconnect(error instanceof Error ? error.message : String(error));
+            }
+            this.#writable = null;
+            throw specError(
+              'UnknownError',
+              `Failed to drain the serial port: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
           this.#writable = null;
         },
         abort: async (): Promise<void> => {
@@ -266,8 +280,9 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
         return;
       }
       if (this.#isDisconnect(error)) {
-        this.#disconnect(error instanceof Error ? error.message : String(error));
-        return;
+        // The stream is already errored by the disconnect, which does not
+        // reject the in-flight write request: reject it explicitly.
+        throw this.#disconnect(error instanceof Error ? error.message : String(error));
       }
       this.#writable = null;
       throw specError(
@@ -290,12 +305,14 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
   /**
    * Shared disconnect algorithm: both streams become fatally broken, the port
    * reports itself as disconnected, and a single `disconnect` event is fired.
+   * Returns the `NetworkError` for the operation that uncovered the
+   * disconnect to reject its own caller with.
    */
-  #disconnect(reason: string): void {
-    if (this.#readFatal) {
-      return;
-    }
+  #disconnect(reason: string): DOMException {
     const networkError: DOMException = specError('NetworkError', reason);
+    if (this.#readFatal) {
+      return networkError;
+    }
     const readable: ReadableStream<Uint8Array> | null = this.#readable;
     const writable: WritableStream<Uint8Array> | null = this.#writable;
     this.#readFatal = true;
@@ -310,6 +327,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
       this.#writeController?.error(networkError);
     }
     this.#fireEvent('disconnect');
+    return networkError;
   }
 
   /** Fires a connect or disconnect event to the property handler, then to the event listeners. */
