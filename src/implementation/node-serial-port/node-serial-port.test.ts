@@ -381,6 +381,20 @@ describe('NodeSerialPort.readable', () => {
     expect(Array.from(result.value ?? [])).toEqual([97, 98, 99, 100]);
   });
 
+  it('reads into a BYOB view at a non-zero byte offset without touching foreign slots', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ data: Buffer.from('ABCD') });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    const reader: ReadableStreamBYOBReader = port.readable!.getReader({ mode: 'byob' });
+    const backing: Uint8Array = new Uint8Array(8);
+    const result: ReadableStreamReadResult<Uint8Array> = await reader.read(backing.subarray(2, 6));
+    expect(Array.from(result.value ?? [])).toEqual([65, 66, 67, 68]);
+    expect(result.value?.byteOffset).toBe(2);
+    // The backing buffer is transferred for the read and handed back with the
+    // fulfilled view: its slots prove the bytes landed inside the view only.
+    expect(Array.from(new Uint8Array(result.value!.buffer))).toEqual([0, 0, 65, 66, 67, 68, 0, 0]);
+  });
+
   it('performs no OS read until a consumer pulls', async () => {
     const binding: GRecordingBinding = new GRecordingBinding({ data: Buffer.from('abc') });
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });

@@ -179,9 +179,11 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
       return;
     }
     try {
+      // The binding writes at `buffer + offset` (the `fs.read` model): the view
+      // is wrapped as an already-offset sub-buffer, so the binding offset is 0.
       const { bytesRead }: { buffer: Buffer; bytesRead: number } = await port.read(
         Buffer.from(view.buffer, view.byteOffset, view.byteLength),
-        view.byteOffset,
+        0,
         view.byteLength,
       );
       if (this.#readable === null || this.#state !== 'opened') {
