@@ -71,7 +71,9 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
 
   /** Reports the USB identity of the underlying device, when it has one. */
   getInfo(): SerialPortInfo {
-    return this.#info;
+    // A fresh object per call: the spec returns a new map each time, and a
+    // caller mutating the result must not corrupt the port identity.
+    return { ...this.#info };
   }
 
   /**
@@ -121,10 +123,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
       });
     } catch (error) {
       this.#state = 'closed';
-      throw specError(
-        'NetworkError',
-        `Failed to open the serial port: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw specError('NetworkError', `Failed to open the serial port: ${errorText(error)}`);
     }
     this.#state = 'opened';
     this.#connected = true;
@@ -172,6 +171,11 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     port: BindingPortInterface,
     controller: ReadableByteStreamController,
   ): Promise<void> {
+    if (this.#readController !== controller) {
+      // A pull from a stream replaced by close()/open() can outlive it: it
+      // must not touch the state of the current stream.
+      return;
+    }
     const view: ArrayBufferView | null = controller.byobRequest?.view ?? null;
     if (view === null) {
       // The spec guarantees a BYOB view here, but Node also invokes pull without
@@ -195,17 +199,14 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
         return;
       }
       if (this.#isDisconnect(error)) {
-        this.#disconnect(error instanceof Error ? error.message : String(error));
+        this.#disconnect(errorText(error));
         return;
       }
       if (this.#state !== 'opened') {
         return;
       }
       controller.error(
-        specError(
-          'UnknownError',
-          `Failed to read from the serial port: ${error instanceof Error ? error.message : String(error)}`,
-        ),
+        specError('UnknownError', `Failed to read from the serial port: ${errorText(error)}`),
       );
       this.#readable = null;
     }
@@ -248,13 +249,10 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
               return;
             }
             if (this.#isDisconnect(error)) {
-              throw this.#disconnect(error instanceof Error ? error.message : String(error));
+              throw this.#disconnect(errorText(error));
             }
             this.#writable = null;
-            throw specError(
-              'UnknownError',
-              `Failed to drain the serial port: ${error instanceof Error ? error.message : String(error)}`,
-            );
+            throw specError('UnknownError', `Failed to drain the serial port: ${errorText(error)}`);
           }
           this.#writable = null;
         },
@@ -282,13 +280,10 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
       if (this.#isDisconnect(error)) {
         // The stream is already errored by the disconnect, which does not
         // reject the in-flight write request: reject it explicitly.
-        throw this.#disconnect(error instanceof Error ? error.message : String(error));
+        throw this.#disconnect(errorText(error));
       }
       this.#writable = null;
-      throw specError(
-        'UnknownError',
-        `Failed to write to the serial port: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw specError('UnknownError', `Failed to write to the serial port: ${errorText(error)}`);
     }
   }
 
@@ -332,7 +327,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
 
   /** Fires a connect or disconnect event to the property handler, then to the event listeners. */
   #fireEvent(type: 'connect' | 'disconnect'): void {
-    const event: Event = new Event(type);
+    const event: Event = new Event(type, { bubbles: true });
     const handler: ((this: NodeSerialPort, event: Event) => any) | null =
       type === 'connect' ? this.onconnect : this.ondisconnect;
     handler?.call(this, event);
@@ -348,7 +343,8 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
    * sends the complete tracked state — untouched signals keep the value they
    * had at open time (`dtr` and `rts` asserted, `break` deasserted). Successive
    * calls therefore apply the specification's DTR → RTS → break ordering
-   * across calls.
+   * across calls. A driver failure rejects with a `NetworkError` DOMException
+   * (the specification's mapping for a signal change that fails).
    */
   async setSignals(signals?: SerialOutputSignals): Promise<void> {
     if (this.#state !== 'opened') {
@@ -375,16 +371,12 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     try {
       await port.set({ brk: this.#signals.brk, dtr: this.#signals.dtr, rts: this.#signals.rts });
     } catch (error) {
-      if (this.#isCanceled(error)) {
-        return;
-      }
       if (this.#isDisconnect(error)) {
-        this.#disconnect(error instanceof Error ? error.message : String(error));
-        return;
+        throw this.#disconnect(errorText(error));
       }
       throw specError(
-        'UnknownError',
-        `Failed to set the signals of the serial port: ${error instanceof Error ? error.message : String(error)}`,
+        'NetworkError',
+        `Failed to set the signals of the serial port: ${errorText(error)}`,
       );
     }
   }
@@ -404,11 +396,11 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
       status = await port.get();
     } catch (error) {
       if (this.#isDisconnect(error)) {
-        this.#disconnect(error instanceof Error ? error.message : String(error));
+        throw this.#disconnect(errorText(error));
       }
       throw specError(
         'NetworkError',
-        `Failed to read the signals of the serial port: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to read the signals of the serial port: ${errorText(error)}`,
       );
     }
     return {
@@ -432,15 +424,11 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     if (this.#state !== 'opened') {
       throw specError('InvalidStateError', 'The serial port is not open.');
     }
-    let cancelPromise: Promise<void> | undefined;
-    let abortPromise: Promise<void> | undefined;
-    try {
-      cancelPromise = this.#readable?.cancel();
-      abortPromise = this.#writable?.abort();
-    } catch (error) {
-      // cancel()/abort() throw synchronously while a reader or writer holds the lock: the port stays open.
-      throw error;
-    }
+    // Node rejects cancel()/abort() with a promise when the stream is locked
+    // (no synchronous throw): the rejection propagates below and the port
+    // stays open, per the close-under-lock ruling.
+    const cancelPromise: Promise<void> | undefined = this.#readable?.cancel();
+    const abortPromise: Promise<void> | undefined = this.#writable?.abort();
     const port: BindingPortInterface = this.#port!;
     this.#state = 'closing';
     try {
@@ -460,4 +448,9 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     this.#writable = null;
     this.#port = undefined;
   }
+}
+
+/** Extracts a message from an unknown driver error for spec error messages. */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

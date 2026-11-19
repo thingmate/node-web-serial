@@ -174,6 +174,15 @@ describe('NodeSerialPort', () => {
     expect(port.getInfo()).toEqual({});
   });
 
+  it('returns a fresh object from getInfo so callers cannot corrupt the port identity', () => {
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/ttyUSB0',
+      info: { usbVendorId: 0x10c4 },
+    });
+    (port.getInfo() as { usbVendorId: number }).usbVendorId = 0x123;
+    expect(port.getInfo()).toEqual({ usbVendorId: 0x10c4 });
+  });
+
   it('is not connected before being opened', () => {
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/ttyUSB0' });
     expect(port.connected).toBe(false);
@@ -438,8 +447,9 @@ describe('NodeSerialPort.readable', () => {
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
     const reader: ReadableStreamBYOBReader = port.readable!.getReader({ mode: 'byob' });
-    const backing: Uint8Array = new Uint8Array(8);
-    const result: ReadableStreamReadResult<Uint8Array> = await reader.read(backing.subarray(2, 6));
+    const result: ReadableStreamReadResult<Uint8Array> = await reader.read(
+      new Uint8Array(8).subarray(2, 6),
+    );
     expect(Array.from(result.value ?? [])).toEqual([65, 66, 67, 68]);
     expect(result.value?.byteOffset).toBe(2);
     // The backing buffer is transferred for the read and handed back with the
@@ -661,17 +671,20 @@ describe('NodeSerialPort.disconnect', () => {
     expect(port.writable).toBeNull();
   });
 
-  it('invokes the ondisconnect property handler with an Event whose type is disconnect', async () => {
+  it('invokes the ondisconnect property handler with a bubbling Event whose type is disconnect', async () => {
     const binding: GRecordingBinding = new GRecordingBinding({ disconnectedRead: true });
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
     let eventType: string | undefined;
+    let eventBubbles: boolean | undefined;
     port.ondisconnect = (event: Event): void => {
       eventType = event.type;
+      eventBubbles = event.bubbles;
     };
     const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
     await expect(reader.read()).rejects.toThrow();
     expect(eventType).toBe('disconnect');
+    expect(eventBubbles).toBe(true);
   });
 });
 
@@ -722,6 +735,30 @@ describe('NodeSerialPort.signals', () => {
       { dtr: true, rts: true, brk: false },
       { dtr: false, rts: true, brk: false },
     ]);
+  });
+
+  it('rejects setSignals with a NetworkError DOMException when the driver fails', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ failingSet: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    await expect(port.setSignals({ requestToSend: true })).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
+    );
+  });
+
+  it('rejects setSignals and fires disconnect when the driver disconnects', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ disconnectedSet: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    await port.open({ baudRate: 9600 });
+    let handlerCalls: number = 0;
+    port.ondisconnect = (): void => {
+      handlerCalls += 1;
+    };
+    await expect(port.setSignals({ requestToSend: true })).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
+    );
+    expect(handlerCalls).toBe(1);
+    expect(port.connected).toBe(false);
   });
 
   it('maps modem status to input signals with ringIndicator always false', async () => {
