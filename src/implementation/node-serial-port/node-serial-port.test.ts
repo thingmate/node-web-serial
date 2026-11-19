@@ -10,7 +10,7 @@ import { SerialPortMock } from 'serialport';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-info.ts';
 import type { DisconnectFlaggedError } from '../helpers.private/binding-errors/binding-errors.ts';
-import { presenceChannels } from '../helpers.private/port-presence/port-presence.ts';
+import { presenceChannels, watchRequests } from '../helpers.private/port-channels/port-channels.ts';
 import { NodeSerialPort } from './node-serial-port.ts';
 
 /** A writable view of the port info, to prove `getInfo()` hands out fresh copies. */
@@ -996,5 +996,75 @@ describe('NodeSerialPort.presence.renewal', () => {
     );
     expect(listenerCalls).toBe(1);
     expect(port.connected).toBe(false);
+  });
+});
+
+describe('NodeSerialPort.watchRequests', () => {
+  beforeEach(() => {
+    SerialPortMock.binding.reset();
+  });
+
+  it('requests watching once open and releases it on close', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ data: Buffer.from('ok') });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    const requests: boolean[] = [];
+    watchRequests.set(port, (needs: boolean): void => {
+      requests.push(needs);
+    });
+    await port.open({ baudRate: 9600 });
+    expect(requests).toEqual([true]);
+    await port.close();
+    expect(requests).toEqual([true, false]);
+  });
+
+  it('does not request watching when open fails', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ failingOpen: true });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    const requests: boolean[] = [];
+    watchRequests.set(port, (needs: boolean): void => {
+      requests.push(needs);
+    });
+    await expect(port.open({ baudRate: 9600 })).rejects.toThrow();
+    expect(requests).toEqual([]);
+  });
+
+  it('keeps the request when a driver disconnect fires', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({
+      data: Buffer.from('ok'),
+      disconnectedRead: true,
+      bindingDisconnectFlag: true,
+    });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    const requests: boolean[] = [];
+    watchRequests.set(port, (needs: boolean): void => {
+      requests.push(needs);
+    });
+    await port.open({ baudRate: 9600 });
+    let disconnects: number = 0;
+    port.addEventListener('disconnect', (): void => {
+      disconnects += 1;
+    });
+    const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
+    await expect(reader.read()).rejects.toSatisfy(
+      (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
+    );
+    expect(disconnects).toBe(1);
+    expect(requests).toEqual([true]);
+  });
+
+  it('does not release the request while close fails under lock', async () => {
+    const binding: GRecordingBinding = new GRecordingBinding({ data: Buffer.from('ok') });
+    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
+    const requests: boolean[] = [];
+    watchRequests.set(port, (needs: boolean): void => {
+      requests.push(needs);
+    });
+    await port.open({ baudRate: 9600 });
+    const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
+    await expect(port.close()).rejects.toThrow();
+    expect(requests).toEqual([true]);
+    reader.releaseLock();
+    await port.close();
+    expect(requests).toEqual([true, false]);
   });
 });

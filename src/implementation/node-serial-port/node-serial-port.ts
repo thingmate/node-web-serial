@@ -14,7 +14,7 @@ import type {
   CanceledFlaggedError,
   DisconnectFlaggedError,
 } from '../helpers.private/binding-errors/binding-errors.ts';
-import { presenceChannels } from '../helpers.private/port-presence/port-presence.ts';
+import { presenceChannels, watchRequests } from '../helpers.private/port-channels/port-channels.ts';
 import { specError } from '../helpers.private/spec-errors/spec-errors.ts';
 import { throwUnsupportedHandler } from '../helpers.private/throw-unsupported-handler/throw-unsupported-handler.ts';
 
@@ -161,6 +161,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     this.#bufferSize = options.bufferSize ?? 255;
     this.#signals = { dtr: true, rts: true, brk: false };
     this.#openOptions = options;
+    watchRequests.get(this)?.(true);
   }
 
   /** Maps validated connection options onto the binding's open options. */
@@ -549,6 +550,7 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
     this.#writable = null;
     this.#port = undefined;
     this.#openOptions = undefined;
+    watchRequests.get(this)?.(false);
   }
 }
 

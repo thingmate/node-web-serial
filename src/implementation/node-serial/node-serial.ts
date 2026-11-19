@@ -4,7 +4,7 @@ import type { SerialPortFilter } from '../../types/serial-port-filter/serial-por
 import type { SerialPortRequestOptions } from '../../types/serial-port-request-options/serial-port-request-options.ts';
 import type { Serial } from '../../types/serial/serial.ts';
 import { HotplugWatcher } from '../helpers.private/hotplug-watcher/hotplug-watcher.ts';
-import { presenceChannels } from '../helpers.private/port-presence/port-presence.ts';
+import { presenceChannels } from '../helpers.private/port-channels/port-channels.ts';
 import { specError } from '../helpers.private/spec-errors/spec-errors.ts';
 import { throwUnsupportedHandler } from '../helpers.private/throw-unsupported-handler/throw-unsupported-handler.ts';
 import { NodeSerialPort } from '../node-serial-port/node-serial-port.ts';
