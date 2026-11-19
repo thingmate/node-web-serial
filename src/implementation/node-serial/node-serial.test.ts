@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
 import { SerialPortMock } from 'serialport';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { NodeSerial } from './node-serial.ts';
 
 describe('NodeSerial', () => {
@@ -33,7 +33,9 @@ describe('NodeSerial', () => {
     SerialPortMock.binding.createPort('/dev/a', { vendorId: '10c4' });
     const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
     await expect(serial.requestPort({ filters: [{}] })).rejects.toThrow(TypeError);
-    await expect(serial.requestPort({ filters: [{ usbProductId: 60000 }] })).rejects.toThrow(TypeError);
+    await expect(serial.requestPort({ filters: [{ usbProductId: 60000 }] })).rejects.toThrow(
+      TypeError,
+    );
   });
 
   it('rejects a bluetoothServiceClassId-only filter with a TypeError, like the spec', async () => {
@@ -51,7 +53,9 @@ describe('NodeSerial', () => {
     const serial: NodeSerial = new NodeSerial({ binding: SerialPortMock.binding });
     await expect(
       serial.requestPort({
-        filters: [{ usbVendorId: 0x10c4, bluetoothServiceClassId: '00001101-0000-1000-8000-00805f9b34fb' }],
+        filters: [
+          { usbVendorId: 0x10c4, bluetoothServiceClassId: '00001101-0000-1000-8000-00805f9b34fb' },
+        ],
       }),
     ).rejects.toThrow(TypeError);
   });

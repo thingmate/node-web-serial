@@ -1,5 +1,5 @@
-import type { SerialPort } from '../serial-port/serial-port.ts';
 import type { SerialPortRequestOptions } from '../serial-port-request-options/serial-port-request-options.ts';
+import type { SerialPort } from '../serial-port/serial-port.ts';
 
 /**
  * Entry point of the Web Serial API, mirroring the `Serial` interface exposed

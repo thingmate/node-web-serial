@@ -1,10 +1,10 @@
-import { SerialPort as SerialPortDriver } from 'serialport';
 import type { BindingInterface, PortInfo } from '@serialport/bindings-cpp';
-import { specError } from '../spec-errors/spec-errors.private.ts';
-import { NodeSerialPort } from '../node-serial-port/node-serial-port.ts';
-import type { Serial } from '../../types/serial/serial.ts';
+import { SerialPort as SerialPortDriver } from 'serialport';
 import type { SerialPortFilter } from '../../types/serial-port-filter/serial-port-filter.ts';
 import type { SerialPortRequestOptions } from '../../types/serial-port-request-options/serial-port-request-options.ts';
+import type { Serial } from '../../types/serial/serial.ts';
+import { NodeSerialPort } from '../node-serial-port/node-serial-port.ts';
+import { specError } from '../spec-errors/spec-errors.private.ts';
 
 /**
  * The Web Serial API entry point for Node.js, mirroring the `Serial` interface

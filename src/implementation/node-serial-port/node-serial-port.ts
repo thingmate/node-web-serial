@@ -1,11 +1,11 @@
-import { SerialPort as SerialPortDriver } from 'serialport';
 import type { BindingInterface, BindingPortInterface } from '@serialport/bindings-cpp';
-import { specError } from '../spec-errors/spec-errors.private.ts';
+import { SerialPort as SerialPortDriver } from 'serialport';
 import type { SerialInputSignals } from '../../types/serial-input-signals/serial-input-signals.ts';
 import type { SerialOptions } from '../../types/serial-options/serial-options.ts';
 import type { SerialOutputSignals } from '../../types/serial-output-signals/serial-output-signals.ts';
-import type { SerialPort } from '../../types/serial-port/serial-port.ts';
 import type { SerialPortInfo } from '../../types/serial-port-info/serial-port-info.ts';
+import type { SerialPort } from '../../types/serial-port/serial-port.ts';
+import { specError } from '../spec-errors/spec-errors.private.ts';
 
 /**
  * A Web Serial API `SerialPort` implementation for Node.js, speaking to real

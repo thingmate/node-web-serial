@@ -1,11 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { SerialPortMock } from 'serialport';
 import type {
   BindingInterface,
   BindingPortInterface,
   OpenOptions,
   PortInfo,
 } from '@serialport/bindings-cpp';
+import { SerialPortMock } from 'serialport';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { NodeSerialPort } from './node-serial-port.ts';
 
 /**
@@ -119,7 +119,6 @@ class GRecordingBinding implements BindingInterface {
   }
 }
 
-
 describe('NodeSerialPort', () => {
   it('reports the operating system path of the port', () => {
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/ttyUSB0' });
@@ -156,56 +155,82 @@ describe('NodeSerialPort.open', () => {
   });
 
   it('rejects open() with a TypeError when baudRate is 0', async () => {
-    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/ttyUSB0', binding: SerialPortMock.binding });
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/ttyUSB0',
+      binding: SerialPortMock.binding,
+    });
     await expect(port.open({ baudRate: 0 })).rejects.toThrow(TypeError);
   });
 
   it('rejects open() with a TypeError when dataBits is not 7 or 8', async () => {
-    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/ttyUSB0', binding: SerialPortMock.binding });
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/ttyUSB0',
+      binding: SerialPortMock.binding,
+    });
     await expect(port.open({ baudRate: 9600, dataBits: 7.5 })).rejects.toThrow(TypeError);
     await expect(port.open({ baudRate: 9600, dataBits: 9 })).rejects.toThrow(TypeError);
   });
 
   it('rejects open() with a TypeError when stopBits is not 1 or 2', async () => {
-    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/ttyUSB0', binding: SerialPortMock.binding });
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/ttyUSB0',
+      binding: SerialPortMock.binding,
+    });
     await expect(port.open({ baudRate: 9600, stopBits: 0 })).rejects.toThrow(TypeError);
     await expect(port.open({ baudRate: 9600, stopBits: 3 })).rejects.toThrow(TypeError);
   });
 
   it('rejects open() with a TypeError when bufferSize is 0', async () => {
-    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/ttyUSB0', binding: SerialPortMock.binding });
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/ttyUSB0',
+      binding: SerialPortMock.binding,
+    });
     await expect(port.open({ baudRate: 9600, bufferSize: 0 })).rejects.toThrow(TypeError);
   });
 
   it('rejects a second open() with an InvalidStateError DOMException', async () => {
     SerialPortMock.binding.createPort('/dev/tty.mock');
-    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: SerialPortMock.binding });
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/tty.mock',
+      binding: SerialPortMock.binding,
+    });
     await port.open({ baudRate: 9600 });
     const rejection: Promise<void> = port.open({ baudRate: 9600 });
     await expect(rejection).rejects.toSatisfy(
-      (error: unknown): boolean => error instanceof DOMException && error.name === 'InvalidStateError',
+      (error: unknown): boolean =>
+        error instanceof DOMException && error.name === 'InvalidStateError',
     );
   });
 
   it('rejects open() with an InvalidStateError while opening is in flight', async () => {
     SerialPortMock.binding.createPort('/dev/tty.mock');
-    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: SerialPortMock.binding });
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/tty.mock',
+      binding: SerialPortMock.binding,
+    });
     const pending: Promise<void> = port.open({ baudRate: 9600 });
     await expect(port.open({ baudRate: 9600 })).rejects.toSatisfy(
-      (error: unknown): boolean => error instanceof DOMException && error.name === 'InvalidStateError',
+      (error: unknown): boolean =>
+        error instanceof DOMException && error.name === 'InvalidStateError',
     );
     await pending;
   });
 
   it('opens the port through the binding and reports connected', async () => {
     SerialPortMock.binding.createPort('/dev/tty.mock');
-    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: SerialPortMock.binding });
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/tty.mock',
+      binding: SerialPortMock.binding,
+    });
     await port.open({ baudRate: 9600 });
     expect(port.connected).toBe(true);
   });
 
   it('leaves the port closed and disconnected when the binding fails to open', async () => {
-    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.missing', binding: SerialPortMock.binding });
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/tty.missing',
+      binding: SerialPortMock.binding,
+    });
     const failure: Promise<void> = port.open({ baudRate: 9600 });
     await expect(failure).rejects.toSatisfy(
       (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
@@ -223,9 +248,13 @@ describe('NodeSerialPort.close', () => {
   });
 
   it('rejects close() before open with an InvalidStateError DOMException', async () => {
-    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: new GRecordingBinding() });
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/tty.mock',
+      binding: new GRecordingBinding(),
+    });
     await expect(port.close()).rejects.toSatisfy(
-      (error: unknown): boolean => error instanceof DOMException && error.name === 'InvalidStateError',
+      (error: unknown): boolean =>
+        error instanceof DOMException && error.name === 'InvalidStateError',
     );
   });
 
@@ -356,7 +385,9 @@ describe('NodeSerialPort.readable', () => {
     const binding: GRecordingBinding = new GRecordingBinding({ data: Buffer.from('abc') });
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
-    await new Promise<void>((resolve: () => void) => { setImmediate(resolve); });
+    await new Promise<void>((resolve: () => void) => {
+      setImmediate(resolve);
+    });
     expect(binding.reads).toEqual([]);
     const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
     await reader.read();
@@ -388,7 +419,10 @@ describe('NodeSerialPort.readable', () => {
   });
 
   it('surfaces a driver read error as UnknownError and recreates a fresh readable afterwards', async () => {
-    const binding: GRecordingBinding = new GRecordingBinding({ data: Buffer.from('ok'), failingRead: true });
+    const binding: GRecordingBinding = new GRecordingBinding({
+      data: Buffer.from('ok'),
+      failingRead: true,
+    });
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
     const first: ReadableStream<Uint8Array> | null = port.readable;
@@ -483,7 +517,9 @@ describe('NodeSerialPort.writable', () => {
     writer.write(new Uint8Array([2])).catch(() => {});
     writer.abort(new Error('aborted by the test'));
     await expect(inFlight).rejects.toThrow();
-    await new Promise<void>((resolve: () => void) => { setImmediate(resolve); });
+    await new Promise<void>((resolve: () => void) => {
+      setImmediate(resolve);
+    });
     expect(binding.flushed).toBe(false);
   });
 });
@@ -499,8 +535,12 @@ describe('NodeSerialPort.disconnect', () => {
     await port.open({ baudRate: 9600 });
     let handlerCalls: number = 0;
     let listenerCalls: number = 0;
-    port.ondisconnect = (): void => { handlerCalls += 1; };
-    port.addEventListener('disconnect', (): void => { listenerCalls += 1; });
+    port.ondisconnect = (): void => {
+      handlerCalls += 1;
+    };
+    port.addEventListener('disconnect', (): void => {
+      listenerCalls += 1;
+    });
     const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
     await expect(reader.read()).rejects.toSatisfy(
       (error: unknown): boolean => error instanceof DOMException && error.name === 'NetworkError',
@@ -525,7 +565,9 @@ describe('NodeSerialPort.disconnect', () => {
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
     let eventType: string | undefined;
-    port.ondisconnect = (event: Event): void => { eventType = event.type; };
+    port.ondisconnect = (event: Event): void => {
+      eventType = event.type;
+    };
     const reader: ReadableStreamDefaultReader<Uint8Array> = port.readable!.getReader();
     await expect(reader.read()).rejects.toThrow();
     expect(eventType).toBe('disconnect');
@@ -538,16 +580,24 @@ describe('NodeSerialPort.signals', () => {
   });
 
   it('rejects setSignals before open with an InvalidStateError DOMException', async () => {
-    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: new GRecordingBinding() });
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/tty.mock',
+      binding: new GRecordingBinding(),
+    });
     await expect(port.setSignals({ dataTerminalReady: true })).rejects.toSatisfy(
-      (error: unknown): boolean => error instanceof DOMException && error.name === 'InvalidStateError',
+      (error: unknown): boolean =>
+        error instanceof DOMException && error.name === 'InvalidStateError',
     );
   });
 
   it('rejects getSignals before open with an InvalidStateError DOMException', async () => {
-    const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding: new GRecordingBinding() });
+    const port: NodeSerialPort = new NodeSerialPort({
+      path: '/dev/tty.mock',
+      binding: new GRecordingBinding(),
+    });
     await expect(port.getSignals()).rejects.toSatisfy(
-      (error: unknown): boolean => error instanceof DOMException && error.name === 'InvalidStateError',
+      (error: unknown): boolean =>
+        error instanceof DOMException && error.name === 'InvalidStateError',
     );
   });
 
@@ -574,7 +624,9 @@ describe('NodeSerialPort.signals', () => {
   });
 
   it('maps modem status to input signals with ringIndicator always false', async () => {
-    const binding: GRecordingBinding = new GRecordingBinding({ status: { cts: true, dsr: false, dcd: true } });
+    const binding: GRecordingBinding = new GRecordingBinding({
+      status: { cts: true, dsr: false, dcd: true },
+    });
     const port: NodeSerialPort = new NodeSerialPort({ path: '/dev/tty.mock', binding });
     await port.open({ baudRate: 9600 });
     await expect(port.getSignals()).resolves.toEqual({
