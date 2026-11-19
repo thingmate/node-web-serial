@@ -20,33 +20,46 @@ export interface HotplugWatcherOptions {
  * diffed against the previous one. A `list()` that is still in flight skips
  * its ticks, and one that fails is retried on the next tick against the
  * previous snapshot. The underlying timer is `unref()`d: watching never
- * keeps the process alive.
+ * keeps the process alive. `stop()` ends the watching: the timer is cleared
+ * and a snapshot still in flight is discarded. A new watching period is a
+ * new instance, which re-baselines silently.
  */
 export class HotplugWatcher {
   readonly #binding: BindingInterface;
   readonly #onAdded: (info: PortInfo) => void;
   readonly #onRemoved: (path: string) => void;
+  readonly #timer: NodeJS.Timeout;
   #known = new Set<string>();
   #baseline = false;
   #inFlight = false;
+  #stopped = false;
 
   constructor({ binding, interval, onAdded, onRemoved }: HotplugWatcherOptions) {
     this.#binding = binding;
     this.#onAdded = onAdded;
     this.#onRemoved = onRemoved;
     void this.#tick();
-    setInterval((): void => {
+    this.#timer = setInterval((): void => {
       void this.#tick();
     }, interval).unref();
   }
 
+  /** Ends the watching: clears the timer and discards the snapshot in flight, if any. */
+  stop(): void {
+    clearInterval(this.#timer);
+    this.#stopped = true;
+  }
+
   async #tick(): Promise<void> {
-    if (this.#inFlight) {
+    if (this.#stopped || this.#inFlight) {
       return;
     }
     this.#inFlight = true;
     try {
       const infos: PortInfo[] = await this.#binding.list();
+      if (this.#stopped) {
+        return;
+      }
       const seen: Set<string> = new Set(infos.map((info: PortInfo): string => info.path));
       if (this.#baseline) {
         for (const info of infos) {

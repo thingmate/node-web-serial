@@ -163,3 +163,72 @@ describe('HotplugWatcher', () => {
     expect(added.map((info: PortInfo): string => info.path)).toEqual(['/dev/b']);
   });
 });
+
+describe('HotplugWatcher.stop', () => {
+  let added: PortInfo[];
+  let removed: string[];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    added = [];
+    removed = [];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function startWatcher(binding: GListBinding): HotplugWatcher {
+    return new HotplugWatcher({
+      binding,
+      interval: 500,
+      onAdded: (info: PortInfo): void => {
+        added.push(info);
+      },
+      onRemoved: (path: string): void => {
+        removed.push(path);
+      },
+    });
+  }
+
+  it('stops polling after stop()', async () => {
+    const binding: GListBinding = new GListBinding();
+    binding.queue([portInfo('/dev/a')]);
+    const watcher: HotplugWatcher = startWatcher(binding);
+    await vi.advanceTimersByTimeAsync(0);
+    watcher.stop();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(binding.listCalls).toBe(1);
+    expect(added).toEqual([]);
+    expect(removed).toEqual([]);
+  });
+
+  it('discards an in-flight list when stopped', async () => {
+    const binding: GListBinding = new GListBinding();
+    binding.queue([]);
+    const watcher: HotplugWatcher = startWatcher(binding);
+    await vi.advanceTimersByTimeAsync(0);
+    binding.hangList = true;
+    await vi.advanceTimersByTimeAsync(500);
+    watcher.stop();
+    binding.release([portInfo('/dev/b')]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(added).toEqual([]);
+    expect(removed).toEqual([]);
+    expect(binding.listCalls).toBe(2);
+  });
+
+  it('stop() is idempotent', async () => {
+    const binding: GListBinding = new GListBinding();
+    binding.queue([portInfo('/dev/a')]);
+    const watcher: HotplugWatcher = startWatcher(binding);
+    await vi.advanceTimersByTimeAsync(0);
+    watcher.stop();
+    watcher.stop();
+    binding.queue([portInfo('/dev/a'), portInfo('/dev/b')]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(binding.listCalls).toBe(1);
+    expect(added).toEqual([]);
+    expect(removed).toEqual([]);
+  });
+});
