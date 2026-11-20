@@ -5,6 +5,7 @@ import type {
   PortStatus,
 } from '@serialport/bindings-cpp';
 import { SerialPort as SerialPortDriver } from 'serialport';
+import type { SerialEventHandler } from '../../types/serial-event-handler/serial-event-handler.ts';
 import type { SerialInputSignals } from '../../types/serial-input-signals/serial-input-signals.ts';
 import type { SerialOptions } from '../../types/serial-options/serial-options.ts';
 import type { SerialOutputSignals } from '../../types/serial-output-signals/serial-output-signals.ts';
@@ -59,11 +60,11 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
    * Not usable as a property: the events are delivered to `addEventListener`
    * listeners only. Reading or assigning throws a `TypeError`.
    */
-  get onconnect(): ((this: SerialPort, event: Event) => any) | null {
+  get onconnect(): SerialEventHandler<SerialPort> | null {
     return throwUnsupportedHandler('onconnect');
   }
 
-  set onconnect(_handler: ((this: SerialPort, event: Event) => any) | null) {
+  set onconnect(_handler: SerialEventHandler<SerialPort> | null) {
     throwUnsupportedHandler('onconnect');
   }
 
@@ -72,11 +73,11 @@ export class NodeSerialPort extends EventTarget implements SerialPort {
    * `addEventListener` listeners only. Reading or assigning throws a
    * `TypeError`.
    */
-  get ondisconnect(): ((this: SerialPort, event: Event) => any) | null {
+  get ondisconnect(): SerialEventHandler<SerialPort> | null {
     return throwUnsupportedHandler('ondisconnect');
   }
 
-  set ondisconnect(_handler: ((this: SerialPort, event: Event) => any) | null) {
+  set ondisconnect(_handler: SerialEventHandler<SerialPort> | null) {
     throwUnsupportedHandler('ondisconnect');
   }
 

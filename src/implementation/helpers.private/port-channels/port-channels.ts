@@ -7,11 +7,20 @@ import type { NodeSerialPort } from '../../node-serial-port/node-serial-port.ts'
  * `NodeSerialPort` use them.
  */
 
-/** Hub → port: delivers presence updates to the port object it created. */
-export const presenceChannels = new WeakMap<NodeSerialPort, (present: boolean) => void>();
+/**
+ * Hub → port: receives the presence of the port object the hub created,
+ * `true` when present and `false` when gone.
+ */
+export type PortPresenceListener = (present: boolean) => void;
 
 /**
- * Port → hub: the port asks the hub to keep watching while it is open, and
- * releases the ask when a full `close()` completes.
+ * Port → hub: receives the port's watching need, `true` while it is open and
+ * `false` when a full `close()` completes.
  */
-export const watchRequests = new WeakMap<NodeSerialPort, (needs: boolean) => void>();
+export type PortWatchRequestListener = (needs: boolean) => void;
+
+/** Delivers presence updates to the port object it created. */
+export const presenceChannels = new WeakMap<NodeSerialPort, PortPresenceListener>();
+
+/** Carries the port's watching requests to the hub. */
+export const watchRequests = new WeakMap<NodeSerialPort, PortWatchRequestListener>();

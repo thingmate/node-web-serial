@@ -1,3 +1,4 @@
+import type { SerialEventHandler } from '../serial-event-handler/serial-event-handler.ts';
 import type { SerialInputSignals } from '../serial-input-signals/serial-input-signals.ts';
 import type { SerialOptions } from '../serial-options/serial-options.ts';
 import type { SerialOutputSignals } from '../serial-output-signals/serial-output-signals.ts';
@@ -12,9 +13,9 @@ import type { SerialPortInfo } from '../serial-port-info/serial-port-info.ts';
  */
 export interface SerialPort extends EventTarget {
   /** Handles the port being connected to the system. */
-  onconnect: ((this: SerialPort, event: Event) => any) | null;
+  onconnect: SerialEventHandler<SerialPort> | null;
   /** Handles the port being disconnected from the system. */
-  ondisconnect: ((this: SerialPort, event: Event) => any) | null;
+  ondisconnect: SerialEventHandler<SerialPort> | null;
   /** Whether the port is logically connected to the system. */
   readonly connected: boolean;
   /** Incoming bytes, or `null` while the port is not open. */
@@ -35,12 +36,9 @@ export interface SerialPort extends EventTarget {
   /** Revokes the permission granted to this port. */
   forget(): Promise<void>;
 
-  addEventListener(
-    type: 'connect' | 'disconnect',
-    listener: (this: SerialPort, event: Event) => any,
-  ): void;
+  addEventListener(type: 'connect' | 'disconnect', listener: SerialEventHandler<SerialPort>): void;
   removeEventListener(
     type: 'connect' | 'disconnect',
-    listener: (this: SerialPort, event: Event) => any,
+    listener: SerialEventHandler<SerialPort>,
   ): void;
 }

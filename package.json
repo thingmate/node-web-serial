@@ -1,6 +1,6 @@
 {
   "name": "@thingmate/node-web-serial",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "Web Serial API for Node.js: spec-faithful Serial and SerialPort on top of serialport bindings",
   "keywords": [
