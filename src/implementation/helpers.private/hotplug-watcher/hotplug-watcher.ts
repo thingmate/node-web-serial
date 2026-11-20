@@ -1,5 +1,11 @@
 import type { BindingInterface, PortInfo } from '@serialport/bindings-cpp';
 
+/** Callback for each port present in a snapshot but absent from the previous one. */
+export type PortAddedListener = (info: PortInfo) => void;
+
+/** Callback for each port path absent from a snapshot but present in the previous one. */
+export type PortRemovedListener = (path: string) => void;
+
 /** Options for constructing a {@linkcode HotplugWatcher}. */
 export interface HotplugWatcherOptions {
   /** The binding polled for the list of present ports. */
@@ -7,9 +13,9 @@ export interface HotplugWatcherOptions {
   /** Milliseconds between two polls. */
   readonly interval: number;
   /** Called for each port present in a snapshot but absent from the previous one. */
-  readonly onAdded: (info: PortInfo) => void;
+  readonly onAdded: PortAddedListener;
   /** Called for each port path absent from a snapshot but present in the previous one. */
-  readonly onRemoved: (path: string) => void;
+  readonly onRemoved: PortRemovedListener;
 }
 
 /**
@@ -33,8 +39,8 @@ export class HotplugWatcher {
   static interval = 500;
 
   readonly #binding: BindingInterface;
-  readonly #onAdded: (info: PortInfo) => void;
-  readonly #onRemoved: (path: string) => void;
+  readonly #onAdded: PortAddedListener;
+  readonly #onRemoved: PortRemovedListener;
   readonly #timer: NodeJS.Timeout;
   #known = new Set<string>();
   #baseline = false;
